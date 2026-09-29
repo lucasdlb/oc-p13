@@ -1,0 +1,108 @@
+:host {
+  display: block;
+  min-height: 100dvh;
+}
+
+.app-shell {
+  min-height: 100dvh;
+  overflow: hidden;
+  padding: clamp(18px, 4vw, 48px);
+  position: relative;
+}
+
+.app-shell::before {
+  background:
+    radial-gradient(circle at 18% 12%, rgba(250, 204, 21, 0.26), transparent 24rem),
+    radial-gradient(circle at 86% 4%, rgba(56, 189, 248, 0.2), transparent 24rem),
+    linear-gradient(135deg, #020617 0%, #111827 52%, #312e16 100%);
+  content: '';
+  inset: 0;
+  position: fixed;
+  z-index: -1;
+}
+
+.hero {
+  align-items: end;
+  display: grid;
+  gap: 28px;
+  margin: 0 auto 30px;
+  max-width: 1260px;
+}
+
+.eyebrow {
+  color: #facc15;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  margin: 0 0 14px;
+  text-transform: uppercase;
+}
+
+h1 {
+  color: #f8fafc;
+  font-size: clamp(2.8rem, 8vw, 7rem);
+  letter-spacing: -0.08em;
+  line-height: 0.9;
+  margin: 0;
+  max-width: 980px;
+}
+
+.intro {
+  color: rgba(226, 232, 240, 0.72);
+  font-size: clamp(1rem, 2vw, 1.25rem);
+  line-height: 1.7;
+  margin: 20px 0 0;
+  max-width: 720px;
+}
+
+.hero-actions,
+.buttons {
+  display: grid;
+  gap: 12px;
+}
+
+.buttons {
+  grid-template-columns: 1fr 1fr;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  padding: 13px 16px;
+}
+
+.primary {
+  background: #facc15;
+  color: #111827;
+}
+
+.secondary {
+  background: rgba(255, 255, 255, 0.12);
+  color: #f8fafc;
+}
+
+.workspace {
+  align-items: start;
+  display: grid;
+  gap: 24px;
+  margin: 0 auto;
+  max-width: 1260px;
+}
+
+.board-column {
+  display: grid;
+  gap: 20px;
+}
+
+@media (min-width: 980px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr) 360px;
+  }
+
+  .workspace {
+    grid-template-columns: minmax(360px, 0.88fr) minmax(420px, 1.12fr);
+  }
+}

@@ -29,9 +29,38 @@ L'application doit proposer une interface Angular avec echiquier interactif et u
 
 ## Stack cible
 
-- Frontend : Angular, `ngx-chessboard` ou `material-chessboard`
+- Frontend : Angular, `@lichess-org/chessground` et `chess.js`
 - Backend : FastAPI, Python 3.12, LangGraph
 - Donnees : MongoDB, Milvus
 - Moteur : Stockfish
 - APIs : Lichess, YouTube
 - Execution locale : `docker compose`
+
+## Configuration locale
+
+Les parametres non secrets vivent dans `config.toml`. Lichess Opening Explorer peut etre active pour tenter les statistiques live, avec fallback seed si le service refuse ou ne repond pas :
+
+```toml
+[lichess]
+enabled = true
+base_url = "https://explorer.lichess.org"
+timeout_seconds = 2.0
+```
+
+Le token Lichess est un secret et doit rester dans `.env`, jamais dans `config.toml` :
+
+```bash
+cp .env.example .env
+```
+
+Puis renseigner :
+
+```text
+LICHESS_TOKEN=<votre-token-lichess>
+```
+
+Generer le token depuis `https://lichess.org/account/oauth/token`. D'apres la specification OpenAPI Lichess, Opening Explorer utilise OAuth2 sans scope specifique pour `/lichess` et `/masters`.
+
+Quand `enabled = false`, quand `LICHESS_TOKEN` manque, ou quand Lichess est indisponible, non autorise, invalide ou vide, le backend renvoie les statistiques seed `seed-lichess-cache` et expose le fallback dans `fallbacks_used`.
+
+Redemarrer FastAPI apres modification de `.env` ou `config.toml`, car les settings sont charges au demarrage.

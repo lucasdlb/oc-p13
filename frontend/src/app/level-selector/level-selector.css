@@ -1,0 +1,25 @@
+.level-card {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(3, 7, 18, 0.58);
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(238, 242, 255, 0.72);
+  cursor: pointer;
+  font: inherit;
+  padding: 10px 12px;
+}
+
+button.active {
+  background: #facc15;
+  color: #111827;
+  font-weight: 800;
+}

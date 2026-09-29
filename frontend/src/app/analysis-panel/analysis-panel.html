@@ -1,0 +1,81 @@
+<section class="analysis-card">
+  <div class="panel-heading">
+    <p class="eyebrow">Coach IA</p>
+    <h2>Analyse sourcee</h2>
+  </div>
+
+  @if (loading()) {
+    <div class="state">Analyse en cours...</div>
+  } @else if (error()) {
+    <div class="state error">{{ error() }}</div>
+  } @else if (analysis(); as result) {
+    <article class="opening">
+      <span>{{ result.opening.eco }}</span>
+      <div>
+        <h3>{{ result.opening.name }}</h3>
+        <p>Source : {{ result.opening.source }}</p>
+      </div>
+    </article>
+
+    <article>
+      <h3>Explication</h3>
+      <p>{{ result.coach_explanation }}</p>
+    </article>
+
+    <article>
+      <h3>Coups recommandes</h3>
+      <div class="moves-grid">
+        @for (move of result.recommended_moves; track move.uci) {
+          <div class="move-card">
+            <strong>{{ move.san }}</strong>
+            <small>{{ move.uci }} - {{ move.source }}</small>
+            <p>{{ move.description }}</p>
+          </div>
+        }
+      </div>
+    </article>
+
+    @if (hasStats()) {
+      <article>
+        <h3>Stats Lichess</h3>
+        <div class="stats">
+          <span>{{ result.lichess_stats.games | number }} parties</span>
+          <span>Blancs {{ result.lichess_stats.white | percent }}</span>
+          <span>Nulles {{ result.lichess_stats.draws | percent }}</span>
+          <span>Noirs {{ result.lichess_stats.black | percent }}</span>
+        </div>
+      </article>
+    }
+
+    <article>
+      <h3>Contexte pedagogique</h3>
+      @for (context of result.rag_context; track context.text) {
+        <p>{{ context.text }}</p>
+        <small>Source : {{ context.source }}</small>
+      }
+    </article>
+
+    <article>
+      <h3>Stockfish</h3>
+      <p>{{ result.stockfish ? 'Evaluation disponible' : 'Non appele sur cette position theorique.' }}</p>
+    </article>
+
+    <article>
+      <h3>Videos</h3>
+      @for (video of result.videos; track video.url) {
+        <a [href]="video.url" target="_blank" rel="noreferrer">{{ video.title }}</a>
+        <small>{{ video.source }}</small>
+      }
+    </article>
+
+    @if (result.fallbacks_used.length) {
+      <div class="fallbacks">
+        @for (fallback of result.fallbacks_used; track fallback) {
+          <span>{{ fallback }}</span>
+        }
+      </div>
+    }
+  } @else {
+    <div class="state">Joue un coup pour afficher l'analyse.</div>
+  }
+</section>

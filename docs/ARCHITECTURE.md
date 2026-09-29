@@ -133,7 +133,7 @@ Les roles precis des sources, de MongoDB, de Milvus et des caches sont definis d
 | Cible | Fallback autorise | Condition d'activation | Impact |
 | --- | --- | --- | --- |
 | YouTube API | Lien de recherche YouTube pre-rempli | Cle absente, quota depasse ou delai integration | Videos non enrichies par metadata |
-| Lichess API | Donnees seed ou cache MongoDB | API indisponible pendant demo | Stats possiblement non live |
+| Lichess API | Donnees seed ou cache MongoDB | `lichess.enabled = false`, `LICHESS_TOKEN` absent, API indisponible, acces non autorise, timeout ou reponse invalide | Stats possiblement non live |
 | Milvus | Collection minimale seedee ou reponse RAG vide explicite | Probleme compose ou ingestion incomplete | Coach moins contextualise |
 | LLM cloud | Provider compatible OpenAI alternatif ou mock coach source | Cle absente ou cout non valide | Reponse moins naturelle |
 | Embeddings cloud | Modele local compact | Cle absente ou cout non valide | Setup local plus lourd |

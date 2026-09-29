@@ -1,0 +1,27 @@
+<section class="history-card">
+  <div>
+    <p class="eyebrow">Historique</p>
+    <h2>Coups joues</h2>
+  </div>
+
+  @if (moves().length) {
+    <ol class="moves">
+      @for (move of moves(); track $index) {
+        <li>{{ move }}</li>
+      }
+    </ol>
+  } @else {
+    <p class="empty">Joue un coup ou lance la demo 1. e4.</p>
+  }
+
+  <dl>
+    <div>
+      <dt>PGN</dt>
+      <dd>{{ pgn() || 'Position initiale' }}</dd>
+    </div>
+    <div>
+      <dt>FEN</dt>
+      <dd>{{ fen() }}</dd>
+    </div>
+  </dl>
+</section>

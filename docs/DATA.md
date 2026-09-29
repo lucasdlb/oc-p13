@@ -43,9 +43,13 @@ Le matching local doit chercher dans cet ordre :
 3. Correspondance par prefixe UCI pour identifier la ligne la plus specifique encore connue.
 4. Absence de match explicite, ce qui peut declencher Stockfish.
 
+Quand Lichess Opening Explorer est disponible et renvoie une ouverture (`eco`, `name`), celle-ci est prioritaire sur le matching local pour l'ouverture affichee ; le seed local devient alors un fallback offline. Les coups populaires Lichess et leurs statistiques associees (`games`, `white`, `draws`, `black`) enrichissent egalement `recommended_moves` avec la source `lichess-opening-explorer`.
+
 ### Collection `lichess_cache`
 
 Role : limiter les appels Lichess et stabiliser la demo.
+
+Etat POC actuel : l'analyse appelle Lichess Opening Explorer sur `https://explorer.lichess.org` seulement si `lichess.enabled = true` dans `config.toml` et si `LICHESS_TOKEN` est present dans l'environnement ou `.env`. Le token est un secret et ne doit pas etre stocke dans `config.toml` : tout `lichess.token` present dans `config.toml` est ignore au chargement des settings, seul `LICHESS_TOKEN` de l'environnement ou `.env` est accepte. Sinon, ou en cas d'erreur HTTP, timeout, reponse invalide, acces non autorise ou statistiques vides, elle renvoie le seed local `seed-lichess-cache` et ajoute un fallback explicite dans `fallbacks_used`.
 
 Exemple minimal :
 
@@ -117,8 +121,9 @@ Chaque source utilisee doit etre documentee dans `source_registry` ou dans une n
 
 | Source | Role | Statut initial | Notes |
 | --- | --- | --- | --- |
+| `demo-opening-seed` | Seed local minimal pour les scenarios MVP | Valide pour POC local | Donnees limitees codees dans le depot avant ingestion MongoDB |
 | `lichess-org/chess-openings` | Matching local et seed MongoDB | A valider | Licence annoncee CC0, a confirmer au moment de l'ingestion |
-| Lichess Opening Explorer | Stats live et coups populaires | A valider | Verifier conditions API et besoin de token |
+| Lichess Opening Explorer | Stats live, coups populaires et identification d'ouverture prioritaire | A valider | OpenAPI indique OAuth2 sur `explorer.lichess.org` ; utiliser `LICHESS_TOKEN` et fallback seed |
 | Wikibooks Chess Opening Theory | Corpus pedagogique RAG | A valider | Verifier licence et structure d'extraction |
 | Wikichess / FICGS | Source optionnelle | A verifier | Mentionnee par le brief, mais HTML et conditions a challenger |
 | YouTube Data API | Videos explicatives | A valider | Prevoir fallback lien de recherche |

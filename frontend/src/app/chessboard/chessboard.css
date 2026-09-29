@@ -1,0 +1,17 @@
+:host {
+  display: block;
+}
+
+.board-shell {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 28px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04));
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.35);
+  padding: clamp(10px, 2vw, 18px);
+}
+
+.cg-board-wrap {
+  aspect-ratio: 1;
+  width: min(76vw, 520px);
+  max-width: 100%;
+}

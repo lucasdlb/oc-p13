@@ -57,15 +57,15 @@ Historique
 
 ## Librairie echiquier
 
-La librairie Angular d'echiquier reste une decision ouverte. Elle doit etre choisie apres recherche cadree comparant au minimum : compatibilite Angular, maintenance, capacite a produire FEN/PGN/UCI, effort d'integration et qualite demo.
+Decision : le frontend Angular utilise `@lichess-org/chessground` pour le rendu et les interactions de l'echiquier, avec `chess.js` pour la validation des coups, la production de FEN, PGN et coups UCI/LAN.
 
-Candidats initiaux :
+Cette decision est documentee dans `docs/adr/0004-angular-chessboard-library.md`. Chessground est GPL-3.0-or-later ; ce risque est accepte pour le POC local et devra etre reevalue avant une distribution proprietaire ou une mise en production.
 
-- `ngx-chessboard`
-- `material-chessboard`
-- autre librairie Angular validee par recherche
+Separation attendue :
 
-Angular reste non negociable. Une librairie peut changer, pas le framework frontend.
+- Chessground gere le rendu, le drag and drop, les callbacks d'interaction et l'etat visuel.
+- `chess.js` gere les regles d'echecs, la legalite des coups, FEN, PGN et historique.
+- Angular reste non negociable et encapsule la librairie dans un composant dedie.
 
 ## Lisibilite des sources
 

@@ -1,0 +1,33 @@
+<main class="app-shell">
+  <section class="hero">
+    <div>
+      <p class="eyebrow">POC Agent d'ouvertures FFE</p>
+      <h1>Visualiser, jouer, comprendre l'ouverture.</h1>
+      <p class="intro">
+        Joue une ligne sur l'echiquier. L'interface transmet FEN, PGN, coups UCI et
+        niveau pedagogique au backend FastAPI pour afficher une analyse sourcee.
+      </p>
+    </div>
+
+    <div class="hero-actions">
+      <app-level-selector [level]="level()" (levelChange)="setLevel($event)" />
+      <div class="buttons">
+        <button type="button" class="primary" (click)="playDemoMove()">Demo 1. e4</button>
+        <button type="button" class="secondary" (click)="reset()">Reinitialiser</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="workspace">
+    <div class="board-column">
+      <app-chessboard
+        [fen]="fen()"
+        [dests]="legalDests()"
+        (moveRequested)="onMoveRequested($event)"
+      />
+      <app-move-history [moves]="moves()" [fen]="fen()" [pgn]="pgn()" />
+    </div>
+
+    <app-analysis-panel [analysis]="analysis()" [loading]="loading()" [error]="error()" />
+  </section>
+</main>
