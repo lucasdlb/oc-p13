@@ -1,81 +1,146 @@
 <section class="analysis-card">
-  <div class="panel-heading">
-    <p class="eyebrow">Coach IA</p>
-    <h2>Analyse sourcee</h2>
-  </div>
-
   @if (loading()) {
-    <div class="state">Analyse en cours...</div>
+    <aside class="coach-column panel-card">
+      <p class="eyebrow">Coach IA</p>
+      <h2>Analyse sourcee</h2>
+      <div class="state">Analyse en cours...</div>
+    </aside>
+    <aside class="explorer-column panel-card muted-panel">
+      <p class="eyebrow">Explorer</p>
+      <h2>Donnees</h2>
+    </aside>
   } @else if (error()) {
-    <div class="state error">{{ error() }}</div>
+    <aside class="coach-column panel-card">
+      <p class="eyebrow">Coach IA</p>
+      <h2>Analyse sourcee</h2>
+      <div class="state error">{{ error() }}</div>
+    </aside>
+    <aside class="explorer-column panel-card muted-panel">
+      <p class="eyebrow">Explorer</p>
+      <h2>Donnees</h2>
+    </aside>
   } @else if (analysis(); as result) {
-    <article class="opening">
-      <span>{{ result.opening.eco }}</span>
-      <div>
-        <h3>{{ result.opening.name }}</h3>
-        <p>Source : {{ result.opening.source }}</p>
+    <aside class="coach-column panel-card">
+      <div class="panel-heading">
+        <p class="eyebrow">Coach IA</p>
+        <h2>Analyse sourcee</h2>
       </div>
-    </article>
 
-    <article>
-      <h3>Explication</h3>
-      <p>{{ result.coach_explanation }}</p>
-    </article>
-
-    <article>
-      <h3>Coups recommandes</h3>
-      <div class="moves-grid">
-        @for (move of result.recommended_moves; track move.uci) {
-          <div class="move-card">
-            <strong>{{ move.san }}</strong>
-            <small>{{ move.uci }} - {{ move.source }}</small>
-            <p>{{ move.description }}</p>
-          </div>
-        }
-      </div>
-    </article>
-
-    @if (hasStats()) {
-      <article>
-        <h3>Stats Lichess</h3>
-        <div class="stats">
-          <span>{{ result.lichess_stats.games | number }} parties</span>
-          <span>Blancs {{ result.lichess_stats.white | percent }}</span>
-          <span>Nulles {{ result.lichess_stats.draws | percent }}</span>
-          <span>Noirs {{ result.lichess_stats.black | percent }}</span>
+      <article class="opening">
+        <span>{{ result.opening.eco }}</span>
+        <div>
+          <h3>{{ result.opening.name }}</h3>
+          <p>Source : {{ result.opening.source }}</p>
         </div>
       </article>
-    }
 
-    <article>
-      <h3>Contexte pedagogique</h3>
+      <article class="coach-note">
+        <h3>Explication</h3>
+        <p>{{ result.coach_explanation }}</p>
+      </article>
+
+      <article class="coach-note">
+        <h3>Contexte pedagogique</h3>
       @for (context of result.rag_context; track context.text) {
         <p>{{ context.text }}</p>
         <small>Source : {{ context.source }}</small>
       }
-    </article>
+      </article>
 
-    <article>
-      <h3>Stockfish</h3>
-      <p>{{ result.stockfish ? 'Evaluation disponible' : 'Non appele sur cette position theorique.' }}</p>
-    </article>
+      <article class="coach-note">
+        <h3>Videos</h3>
+        @for (video of result.videos; track video.url) {
+          <a [href]="video.url" target="_blank" rel="noreferrer">{{ video.title }}</a>
+          <small>{{ video.source }}</small>
+        }
+      </article>
 
-    <article>
-      <h3>Videos</h3>
-      @for (video of result.videos; track video.url) {
-        <a [href]="video.url" target="_blank" rel="noreferrer">{{ video.title }}</a>
-        <small>{{ video.source }}</small>
+      @if (result.fallbacks_used.length) {
+        <div class="fallbacks">
+          @for (fallback of result.fallbacks_used; track fallback) {
+            <span>{{ fallback }}</span>
+          }
+        </div>
       }
-    </article>
+    </aside>
 
-    @if (result.fallbacks_used.length) {
-      <div class="fallbacks">
-        @for (fallback of result.fallbacks_used; track fallback) {
-          <span>{{ fallback }}</span>
+    <aside class="explorer-column panel-card">
+      <div class="panel-heading compact-heading">
+        <div>
+          <p class="eyebrow">Lichess explorer</p>
+          <h2>Coups & stats</h2>
+        </div>
+        @if (hasStats()) {
+          <span class="games-total">{{ result.lichess_stats.games | number }} parties</span>
         }
       </div>
-    }
+
+      <article class="moves-table">
+        <div class="table-head">
+          <span>Coup</span>
+          <span>Parties</span>
+          <span>Blanc / Nulle / Noir</span>
+        </div>
+        @for (move of result.recommended_moves; track move.uci) {
+          <div class="move-row">
+            <div class="move-name">
+              <strong>{{ move.san }}</strong>
+              <small>{{ move.uci }}</small>
+            </div>
+            <span class="move-games">
+              @if (move.games !== null) {
+                {{ move.games | number }}
+              } @else {
+                -
+              }
+            </span>
+            <div class="result-cell">
+              <div class="result-bar" aria-hidden="true">
+                <span class="white" [style.flex-grow]="move.white ?? 0"></span>
+                <span class="draw" [style.flex-grow]="move.draws ?? 0"></span>
+                <span class="black" [style.flex-grow]="move.black ?? 0"></span>
+              </div>
+              <small>
+                {{ move.white !== null ? (move.white | percent) : '-' }} /
+                {{ move.draws !== null ? (move.draws | percent) : '-' }} /
+                {{ move.black !== null ? (move.black | percent) : '-' }}
+              </small>
+            </div>
+          </div>
+        }
+      </article>
+
+      @if (hasStats()) {
+        <article class="stats-card">
+          <h3>Position</h3>
+          <div class="result-bar large" aria-hidden="true">
+            <span class="white" [style.flex-grow]="result.lichess_stats.white"></span>
+            <span class="draw" [style.flex-grow]="result.lichess_stats.draws"></span>
+            <span class="black" [style.flex-grow]="result.lichess_stats.black"></span>
+          </div>
+          <div class="stats-legend">
+            <span>Blancs {{ result.lichess_stats.white | percent }}</span>
+            <span>Nulles {{ result.lichess_stats.draws | percent }}</span>
+            <span>Noirs {{ result.lichess_stats.black | percent }}</span>
+          </div>
+        </article>
+      }
+
+      <article class="stockfish-card">
+        <h3>Stockfish</h3>
+        <p>{{ result.stockfish ? 'Evaluation disponible' : 'Non appele sur cette position theorique.' }}</p>
+      </article>
+    </aside>
   } @else {
-    <div class="state">Joue un coup pour afficher l'analyse.</div>
+    <aside class="coach-column panel-card">
+      <p class="eyebrow">Coach IA</p>
+      <h2>Analyse sourcee</h2>
+      <div class="state">Joue un coup pour afficher l'analyse.</div>
+    </aside>
+    <aside class="explorer-column panel-card muted-panel">
+      <p class="eyebrow">Lichess explorer</p>
+      <h2>Coups & stats</h2>
+      <div class="state">Les donnees apparaissent apres un coup.</div>
+    </aside>
   }
 </section>

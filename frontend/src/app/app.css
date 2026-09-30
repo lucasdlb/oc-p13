@@ -1,12 +1,15 @@
 :host {
   display: block;
-  min-height: 100dvh;
+  height: 100dvh;
 }
 
 .app-shell {
-  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  height: 100dvh;
   overflow: hidden;
-  padding: clamp(18px, 4vw, 48px);
+  padding: 16px;
   position: relative;
 }
 
@@ -21,44 +24,49 @@
   z-index: -1;
 }
 
-.hero {
-  align-items: end;
+.top-bar {
+  align-items: center;
   display: grid;
-  gap: 28px;
-  margin: 0 auto 30px;
-  max-width: 1260px;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin: 0 auto;
+  max-width: 1440px;
+  width: 100%;
 }
 
 .eyebrow {
   color: #facc15;
-  font-size: 0.78rem;
+  font-size: 0.7rem;
   font-weight: 900;
   letter-spacing: 0.16em;
-  margin: 0 0 14px;
+  margin: 0 0 4px;
   text-transform: uppercase;
 }
 
 h1 {
   color: #f8fafc;
-  font-size: clamp(2.8rem, 8vw, 7rem);
-  letter-spacing: -0.08em;
-  line-height: 0.9;
+  font-size: clamp(1.5rem, 3vw, 2.5rem);
+  letter-spacing: -0.05em;
+  line-height: 1;
   margin: 0;
-  max-width: 980px;
 }
 
 .intro {
   color: rgba(226, 232, 240, 0.72);
-  font-size: clamp(1rem, 2vw, 1.25rem);
-  line-height: 1.7;
-  margin: 20px 0 0;
-  max-width: 720px;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  margin: 6px 0 0;
+  max-width: 620px;
 }
 
-.hero-actions,
+.top-actions,
 .buttons {
   display: grid;
   gap: 12px;
+}
+
+.top-actions {
+  grid-template-columns: 360px 360px;
 }
 
 .buttons {
@@ -85,24 +93,52 @@ button {
 }
 
 .workspace {
-  align-items: start;
+  align-items: stretch;
   display: grid;
-  gap: 24px;
+  gap: 16px;
+  grid-template-columns: minmax(280px, 330px) minmax(520px, 680px) minmax(320px, 380px);
+  height: 100%;
   margin: 0 auto;
-  max-width: 1260px;
+  max-width: 1440px;
+  min-height: 0;
+  width: 100%;
 }
 
 .board-column {
+  align-content: start;
+  align-items: start;
   display: grid;
-  gap: 20px;
+  gap: 12px;
+  grid-column: 2;
+  grid-row: 1;
+  justify-items: center;
+  min-height: 0;
+  overflow: hidden;
 }
 
-@media (min-width: 980px) {
-  .hero {
-    grid-template-columns: minmax(0, 1fr) 360px;
+app-analysis-panel {
+  display: contents;
+}
+
+@media (max-width: 1199px) {
+  .app-shell {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
   }
 
+  .top-bar,
   .workspace {
-    grid-template-columns: minmax(360px, 0.88fr) minmax(420px, 1.12fr);
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .top-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .board-column {
+    grid-column: auto;
+    overflow: visible;
   }
 }

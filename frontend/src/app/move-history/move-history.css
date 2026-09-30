@@ -1,10 +1,13 @@
 .history-card {
   display: grid;
-  gap: 14px;
+  gap: 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 24px;
+  border-radius: 16px;
   background: rgba(15, 23, 42, 0.72);
-  padding: 20px;
+  max-height: 190px;
+  overflow: auto;
+  padding: 12px;
+  width: 100%;
 }
 
 .eyebrow,
@@ -19,7 +22,7 @@ dt {
 
 h2 {
   color: #f8fafc;
-  font-size: 1.15rem;
+  font-size: 0.95rem;
   margin: 2px 0 0;
 }
 
@@ -36,7 +39,8 @@ h2 {
   border-radius: 999px;
   background: rgba(250, 204, 21, 0.14);
   color: #fef9c3;
-  padding: 7px 10px;
+  font-size: 0.78rem;
+  padding: 5px 8px;
 }
 
 .empty,
@@ -47,10 +51,11 @@ dd {
 
 dl {
   display: grid;
-  gap: 12px;
+  gap: 7px;
   margin: 0;
 }
 
 dd {
+  font-size: 0.78rem;
   overflow-wrap: anywhere;
 }

@@ -5,6 +5,7 @@ build/
 dist/
 wheels/
 *.egg-info
+node_modules/
 
 # Virtual environments
 .venv
@@ -14,3 +15,6 @@ wheels/
 
 # IDE files
 .idea/
+
+# Agent scratch space (UI reviews, captures)
+.scratch/

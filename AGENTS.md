@@ -6,6 +6,8 @@ Start every session here. This file is the short index for agent context and too
 
 Read `docs/AGENT_CONTEXT.md` before proposing or implementing project work. It defines the current source of truth, required docs, validation workflow, and project constraints.
 
+For Angular UI changes or visual review, read `UI-WORKFLOW.md`. It defines the screenshot feedback loop and the repo-level capture tool under `tools/ui-capture/`.
+
 ### Skill index
 
 Skills are installed under `.agents/skills/`. Load the relevant skill before specialized work.
