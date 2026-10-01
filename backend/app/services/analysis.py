@@ -1,23 +1,66 @@
 from urllib.parse import quote_plus
 
+import chess
+from pydantic import ValidationError
+
+from backend.app.core.settings import RecommendationSettings, get_settings
 from backend.app.models.analysis import (
     AnalyzePositionRequest,
     AnalyzePositionResponse,
+    LichessStats,
     Opening,
     RagContext,
     RecommendedMove,
     Video,
 )
-from backend.app.services.lichess import LICHESS_SOURCE, LichessExplorerClient
+from backend.app.services.cache_store import (
+    CacheStore,
+    lichess_cache_key,
+    masters_cache_key,
+    stockfish_cache_key,
+)
+from backend.app.services.lichess import (
+    LICHESS_SOURCE,
+    LichessExplorerClient,
+    LichessExplorerResult,
+)
 from backend.app.services.opening_book import DEMO_OPENING_SOURCE, match_opening
+from backend.app.services.session_store import SessionStore, build_move_docs
+from backend.app.services.stockfish import StockfishService, engine_version
+
+
+RATING_BUCKETS = (0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500)
 
 
 def analyze_position(
     request: AnalyzePositionRequest,
     lichess_client: LichessExplorerClient,
+    stockfish_service: StockfishService,
+    cache_store: CacheStore,
+    session_store: SessionStore,
 ) -> AnalyzePositionResponse:
+    all_settings = get_settings()
+    settings = all_settings.recommendations
     local_match = match_opening(request.moves, request.fen)
-    lichess_result = lichess_client.fetch_explorer_analysis(request.moves)
+    ratings = _rating_buckets(request, settings)
+
+    cache_status = {"lichess": "skipped", "masters": "skipped", "stockfish": "skipped"}
+
+    lichess_result = _fetch_lichess_cached(
+        cache_store,
+        lichess_client,
+        request.moves,
+        ratings,
+        settings.default_moves,
+        cache_status,
+    )
+    masters_result = _fetch_masters_cached(
+        cache_store,
+        lichess_client,
+        request.moves,
+        settings.default_moves,
+        cache_status,
+    )
 
     fallbacks_used: list[str] = []
 
@@ -33,22 +76,59 @@ def analyze_position(
         context = local_match.context
         fallbacks_used.append("opening_not_matched")
 
+    confidence = _source_confidence(lichess_result.stats.games, settings)
+
     if lichess_result.recommended_moves:
-        recommended_moves = list(lichess_result.recommended_moves)
+        recommended_moves = _rank_moves(
+            lichess_result.recommended_moves,
+            total_games=lichess_result.stats.games,
+            fen=request.fen,
+            settings=settings,
+        )
     else:
         recommended_moves = list(local_match.recommended_moves)
 
     if lichess_result.fallback:
         fallbacks_used.append(lichess_result.fallback)
 
+    if masters_result.fallback:
+        fallbacks_used.append(masters_result.fallback)
+
+    stockfish = _run_stockfish_if_needed(
+        stockfish_service,
+        cache_store,
+        request.fen,
+        confidence,
+        recommended_moves,
+        local_match.matched,
+        cache_status,
+        depth=all_settings.stockfish.depth,
+        binary=all_settings.stockfish.binary,
+    )
+    if stockfish is not None:
+        if stockfish["status"] == "ok":
+            fallbacks_used.append("stockfish_evaluation")
+        else:
+            fallbacks_used.append("stockfish_unavailable")
+
     fallbacks_used.append("youtube_search_fallback")
 
     query = quote_plus(f"{opening.name} chess opening {request.level}")
 
-    return AnalyzePositionResponse(
+    session_id = _sync_session(session_store, request, fallbacks_used)
+
+    response = AnalyzePositionResponse(
         opening=opening,
         recommended_moves=recommended_moves,
+        masters_moves=_rank_moves(
+            masters_result.recommended_moves,
+            total_games=masters_result.stats.games,
+            fen=request.fen,
+            settings=settings,
+        ),
+        masters_stats=masters_result.stats,
         lichess_stats=lichess_result.stats,
+        source_confidence=confidence,
         rag_context=[
             RagContext(
                 text=context,
@@ -57,7 +137,7 @@ def analyze_position(
             )
         ],
         coach_explanation=_coach_explanation(opening, request.level, recommended_moves, context),
-        stockfish=None,
+        stockfish=stockfish,
         videos=[
             Video(
                 title=f"Recherche YouTube: {opening.name} {request.level}",
@@ -66,7 +146,281 @@ def analyze_position(
             )
         ],
         fallbacks_used=fallbacks_used,
+        session_id=session_id,
+        cache=cache_status,
     )
+
+    if session_id is not None:
+        session_store.save_analysis(
+            session_id,
+            _position_key(request.fen, request.level, ratings),
+            request.fen,
+            response.model_dump(),
+        )
+
+    return response
+
+
+def _rating_buckets(
+    request: AnalyzePositionRequest,
+    settings: RecommendationSettings,
+) -> list[int]:
+    preset = settings.rating_presets.get(request.level)
+    minimum = request.rating_min if request.rating_min is not None else preset.min if preset else 0
+    maximum = request.rating_max if request.rating_max is not None else preset.max if preset else 2500
+    if minimum > maximum:
+        minimum, maximum = maximum, minimum
+    if minimum == maximum:
+        return [minimum] if minimum in RATING_BUCKETS else []
+    return [bucket for bucket in RATING_BUCKETS if minimum <= bucket < maximum]
+
+
+def _fetch_lichess(
+    lichess_client: LichessExplorerClient,
+    moves: list[str],
+    ratings: list[int],
+    move_count: int,
+):
+    try:
+        return lichess_client.fetch_explorer_analysis(
+            moves,
+            ratings=ratings,
+            move_count=move_count,
+        )
+    except TypeError:
+        return lichess_client.fetch_explorer_analysis(moves)
+
+
+def _fetch_masters(
+    lichess_client: LichessExplorerClient,
+    moves: list[str],
+    move_count: int,
+):
+    fetch_masters = getattr(lichess_client, "fetch_masters_analysis", None)
+    if fetch_masters is None:
+        return LichessExplorerResult(
+            stats=LichessStats(source="masters-opening-explorer", games=0, white=0, draws=0, black=0),
+            fallback="masters_unavailable",
+        )
+    try:
+        return fetch_masters(moves, move_count=move_count)
+    except TypeError:
+        return fetch_masters(moves)
+
+
+def _fetch_lichess_cached(
+    cache_store: CacheStore,
+    lichess_client: LichessExplorerClient,
+    moves: list[str],
+    ratings: list[int],
+    move_count: int,
+    cache_status: dict,
+):
+    key = lichess_cache_key(moves, ratings)
+    if cache_store.available():
+        cached = _lichess_result_from_payload(cache_store.get_lichess(key))
+        if cached is not None:
+            cache_status["lichess"] = "hit"
+            return cached
+
+    result = _fetch_lichess(lichess_client, moves, ratings, move_count)
+    cache_status["lichess"] = "miss" if cache_store.available() else "skipped"
+    if result.fallback is None and cache_store.available():
+        cache_store.set_lichess(key, _lichess_result_to_payload(result))
+    return result
+
+
+def _fetch_masters_cached(
+    cache_store: CacheStore,
+    lichess_client: LichessExplorerClient,
+    moves: list[str],
+    move_count: int,
+    cache_status: dict,
+):
+    key = masters_cache_key(moves)
+    if cache_store.available():
+        cached = _lichess_result_from_payload(cache_store.get_masters(key))
+        if cached is not None:
+            cache_status["masters"] = "hit"
+            return cached
+
+    result = _fetch_masters(lichess_client, moves, move_count)
+    cache_status["masters"] = "miss" if cache_store.available() else "skipped"
+    if result.fallback is None and cache_store.available():
+        cache_store.set_masters(key, _lichess_result_to_payload(result))
+    return result
+
+
+def _lichess_result_to_payload(result: LichessExplorerResult) -> dict:
+    return {
+        "stats": result.stats.model_dump(),
+        "opening": result.opening.model_dump() if result.opening else None,
+        "recommended_moves": [move.model_dump() for move in result.recommended_moves],
+    }
+
+
+def _lichess_result_from_payload(payload: dict) -> LichessExplorerResult | None:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return LichessExplorerResult(
+            stats=LichessStats.model_validate(payload["stats"]),
+            opening=Opening.model_validate(payload["opening"]) if payload.get("opening") else None,
+            recommended_moves=tuple(
+                RecommendedMove.model_validate(move)
+                for move in payload.get("recommended_moves", [])
+            ),
+        )
+    except (KeyError, TypeError, ValueError, ValidationError):
+        return None
+
+
+def _sync_session(
+    session_store: SessionStore,
+    request: AnalyzePositionRequest,
+    fallbacks_used: list[str],
+) -> str | None:
+    if not session_store.available():
+        fallbacks_used.append("mongo_sessions_unavailable")
+        return None
+
+    session = session_store.get_session(request.session_id) if request.session_id else None
+    if session is None:
+        session = session_store.create_session()
+    if session is None:
+        fallbacks_used.append("mongo_sessions_unavailable")
+        return None
+
+    _sync_moves(session_store, session, request)
+    return session["id"]
+
+
+def _sync_moves(
+    session_store: SessionStore,
+    session: dict,
+    request: AnalyzePositionRequest,
+) -> None:
+    session_moves = [str(move.get("uci", "")) for move in session.get("moves", [])]
+    request_moves = [move.lower() for move in request.moves]
+    prefix = _common_prefix_length(session_moves, request_moves)
+
+    if len(request_moves) <= prefix:
+        return
+
+    moves = build_move_docs(request.moves)
+    if moves is not None:
+        session_store.set_moves(session["id"], moves)
+
+
+def _common_prefix_length(left: list[str], right: list[str]) -> int:
+    prefix = 0
+    for a, b in zip(left, right):
+        if a != b:
+            break
+        prefix += 1
+    return prefix
+
+
+def _position_key(fen: str, level: str, ratings: list[int]) -> str:
+    normalized_fen = chess.Board(fen).fen()
+    return f"{normalized_fen}|{level}|{','.join(str(rating) for rating in ratings)}"
+
+
+def _source_confidence(total_games: int, settings: RecommendationSettings) -> dict:
+    enough_games = total_games >= settings.min_position_games
+    return {
+        "total_games": total_games,
+        "min_position_games": settings.min_position_games,
+        "min_move_share": settings.min_move_share,
+        "low_confidence": not enough_games,
+        "reason": None if enough_games else "position_sample_too_small",
+    }
+
+
+def _rank_moves(
+    moves: tuple[RecommendedMove, ...],
+    total_games: int,
+    fen: str,
+    settings: RecommendationSettings,
+) -> list[RecommendedMove]:
+    side = "black" if fen.split(" ")[1] == "b" else "white"
+    ranked: list[RecommendedMove] = []
+    for move in moves:
+        move_share = round((move.games or 0) / total_games, 6) if total_games > 0 else None
+        relevant = move_share is not None and move_share >= settings.min_move_share
+        badges = [_source_badge(move.source)]
+        if move.average_rating is not None:
+            badges.append(f"Elo {move.average_rating}")
+        if not relevant:
+            badges.append("Faible ech.")
+        ranked.append(
+            move.model_copy(
+                update={
+                    "move_share": move_share,
+                    "relevant": relevant,
+                    "badges": badges,
+                }
+            )
+        )
+
+    return sorted(ranked, key=lambda move: _move_rank_key(move, side), reverse=True)
+
+
+def _source_badge(source: str) -> str:
+    if source == LICHESS_SOURCE:
+        return "Lichess"
+    if source == "masters-opening-explorer":
+        return "Masters"
+    if source == DEMO_OPENING_SOURCE:
+        return "Seed"
+    return source
+
+
+def _move_rank_key(move: RecommendedMove, side: str) -> tuple[int, float, int]:
+    chance = getattr(move, side)
+    return (
+        1 if move.relevant and chance is not None else 0,
+        chance or 0,
+        move.games or 0,
+    )
+
+
+def _run_stockfish_if_needed(
+    stockfish_service: StockfishService,
+    cache_store: CacheStore,
+    fen: str,
+    confidence: dict,
+    recommended_moves: list[RecommendedMove],
+    local_opening_matched: bool,
+    cache_status: dict,
+    depth: int,
+    binary: str,
+) -> dict | None:
+    has_relevant_move = any(move.relevant for move in recommended_moves)
+    if (
+        local_opening_matched
+        and recommended_moves
+        and not confidence["low_confidence"]
+        and has_relevant_move
+    ):
+        cache_status["stockfish"] = "skipped"
+        return None
+    if confidence["low_confidence"] or not has_relevant_move:
+        key = stockfish_cache_key(fen, depth, engine_version(binary))
+        if cache_store.available():
+            cached = cache_store.get_stockfish(key)
+            if isinstance(cached, dict) and cached.get("status") == "ok":
+                cache_status["stockfish"] = "hit"
+                return cached
+
+        result = stockfish_service.evaluate(fen)
+        cache_status["stockfish"] = "miss" if cache_store.available() else "skipped"
+        if isinstance(result, dict) and result.get("status") == "ok" and cache_store.available():
+            cache_store.set_stockfish(key, result)
+        return result
+
+    cache_status["stockfish"] = "skipped"
+    return None
 
 
 def _lichess_context(opening: Opening) -> str:

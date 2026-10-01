@@ -18,7 +18,17 @@
   </header>
 
   <section class="workspace">
-    <app-analysis-panel [analysis]="analysis()" [loading]="loading()" [error]="error()" />
+    <app-analysis-panel
+      [analysis]="analysis()"
+      [fen]="fen()"
+      [ratingMin]="ratingMin()"
+      [ratingMax]="ratingMax()"
+      [ratingBuckets]="ratingBuckets"
+      (ratingMinChange)="setRatingMin($event)"
+      (ratingMaxChange)="setRatingMax($event)"
+      [loading]="loading()"
+      [error]="error()"
+    />
 
     <div class="board-column">
       <app-chessboard
@@ -26,7 +36,15 @@
         [dests]="legalDests()"
         (moveRequested)="onMoveRequested($event)"
       />
-      <app-move-history [moves]="moves()" [fen]="fen()" [pgn]="pgn()" />
+      <app-move-history
+        [moves]="line()"
+        [fen]="fen()"
+        [pgn]="pgn()"
+        [currentIndex]="currentIndex()"
+        [totalMoves]="totalMoves()"
+        (goBack)="goBack()"
+        (goForward)="goForward()"
+      />
     </div>
   </section>
 </main>

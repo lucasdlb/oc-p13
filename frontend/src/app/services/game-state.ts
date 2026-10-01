@@ -8,8 +8,13 @@ export interface GameSnapshot {
   fen: string;
   pgn: string;
   moves: string[];
+  line: string[];
   legalDests: Dests;
   turn: 'white' | 'black';
+  currentIndex: number;
+  totalMoves: number;
+  canGoBack: boolean;
+  canGoForward: boolean;
 }
 
 export interface ApplyMoveResult {
@@ -20,28 +25,68 @@ export interface ApplyMoveResult {
 @Injectable({ providedIn: 'root' })
 export class GameStateService {
   private game = new Chess();
+  private committed: string[] = [];
+  private cursor = 0;
 
   reset(): GameSnapshot {
     this.game = new Chess();
+    this.committed = [];
+    this.cursor = 0;
     return this.snapshot();
   }
 
   applyMove(move: BoardMove): ApplyMoveResult {
     try {
-      this.game.move({ from: move.from, to: move.to, promotion: 'q' });
+      const applied = this.game.move({ from: move.from, to: move.to, promotion: 'q' });
+      this.committed = [...this.committed.slice(0, this.cursor), applied.lan];
+      this.cursor = this.committed.length;
       return { ok: true, snapshot: this.snapshot() };
     } catch {
       return { ok: false, snapshot: this.snapshot() };
     }
   }
 
+  goBack(): GameSnapshot | null {
+    if (this.cursor === 0) {
+      return null;
+    }
+    this.game.undo();
+    this.cursor--;
+    return this.snapshot();
+  }
+
+  goForward(): GameSnapshot | null {
+    if (this.cursor >= this.committed.length) {
+      return null;
+    }
+    const lan = this.committed[this.cursor];
+    try {
+      this.game.move({
+        from: lan.slice(0, 2),
+        to: lan.slice(2, 4),
+        promotion: (lan.slice(4, 5) || 'q') as 'q',
+      });
+    } catch {
+      return null;
+    }
+    this.cursor++;
+    return this.snapshot();
+  }
+
   snapshot(): GameSnapshot {
+    const moves = this.game.history({ verbose: true }).map((move) => move.lan);
+
     return {
       fen: this.game.fen(),
       pgn: this.getShortPgn(),
-      moves: this.game.history({ verbose: true }).map((move) => move.lan),
+      moves,
+      line: [...this.committed],
       legalDests: this.getLegalDests(),
       turn: this.game.turn() === 'w' ? 'white' : 'black',
+      currentIndex: this.cursor,
+      totalMoves: this.committed.length,
+      canGoBack: this.cursor > 0,
+      canGoForward: this.cursor < this.committed.length,
     };
   }
 

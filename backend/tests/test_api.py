@@ -5,12 +5,34 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.main import app
-from backend.app.api.routes import get_lichess_client
-from backend.app.models.analysis import LichessStats, Opening, RecommendedMove
+from backend.app.api.routes import (
+    get_cache_store,
+    get_lichess_client,
+    get_session_store,
+    get_stockfish_service,
+)
+from backend.app.core.settings import get_settings
+from backend.app.models.analysis import AnalyzePositionRequest, LichessStats, Opening, RecommendedMove
+from backend.app.services.analysis import _rating_buckets
+from backend.app.services.cache_store import CacheStore
 from backend.app.services.lichess import LichessExplorerResult
+from backend.app.services.session_store import SessionStore
+from backend.tests.fakes import FakeDatabase
 
 
 client = TestClient(app)
+
+KINGS_PAWN_FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+AFTER_E4_E5_FEN = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+AFTER_E4_D5_FEN = "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+AFTER_NF3_FEN = "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1"
+
+UNMATCHED_PAYLOAD = {
+    "fen": AFTER_NF3_FEN,
+    "pgn": "1. Nf3",
+    "moves": ["g1f3"],
+    "level": "debutant",
+}
 
 
 class SuccessfulLichessClient:
@@ -92,11 +114,62 @@ class DisabledLichessClient(FallbackLichessClient):
     fallback = "lichess_disabled"
 
 
+class SuccessfulStockfishService:
+    def evaluate(self, _fen: str) -> dict:
+        return {
+            "status": "ok",
+            "best_move": "g1f3",
+            "score": {"type": "cp", "value": 24},
+            "depth": 12,
+        }
+
+
+class CountingLichessClient(SuccessfulLichessClient):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def fetch_explorer_analysis(self, _moves: list[str]) -> LichessExplorerResult:
+        self.calls += 1
+        return super().fetch_explorer_analysis(_moves)
+
+
+class CountingStockfishService(SuccessfulStockfishService):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def evaluate(self, _fen: str) -> dict:
+        self.calls += 1
+        return super().evaluate(_fen)
+
+
 @pytest.fixture(autouse=True)
 def hermetic_lichess_client() -> Iterator[None]:
     app.dependency_overrides[get_lichess_client] = lambda: DisabledLichessClient()
     yield
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def hermetic_stores() -> Iterator[FakeDatabase]:
+    database = FakeDatabase()
+    app.dependency_overrides[get_cache_store] = lambda: CacheStore(
+        database=database,
+        settings=get_settings().mongodb,
+    )
+    app.dependency_overrides[get_session_store] = lambda: SessionStore(database=database)
+    yield database
+
+
+def _post_analysis(payload: dict) -> dict:
+    response = client.post("/api/analyze-position", json=payload)
+    assert response.status_code == 200
+    return response.json()
+
+
+def _get_session(session_id: str) -> dict:
+    response = client.get(f"/api/sessions/{session_id}")
+    assert response.status_code == 200
+    return response.json()
 
 
 def test_health_returns_ok() -> None:
@@ -105,6 +178,32 @@ def test_health_returns_ok() -> None:
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     assert response.headers["X-Request-ID"]
+
+
+def test_rating_range_excludes_partially_overlapping_upper_group() -> None:
+    request = AnalyzePositionRequest(
+        fen=KINGS_PAWN_FEN,
+        pgn="1. e4",
+        moves=["e2e4"],
+        level="debutant",
+        rating_min=1000,
+        rating_max=1400,
+    )
+
+    assert _rating_buckets(request, get_settings().recommendations) == [1000, 1200]
+
+
+def test_equal_rating_bounds_select_the_matching_group() -> None:
+    request = AnalyzePositionRequest(
+        fen=KINGS_PAWN_FEN,
+        pgn="1. e4",
+        moves=["e2e4"],
+        level="debutant",
+        rating_min=1400,
+        rating_max=1400,
+    )
+
+    assert _rating_buckets(request, get_settings().recommendations) == [1400]
 
 
 def test_health_reuses_incoming_request_id() -> None:
@@ -140,7 +239,7 @@ def test_analyze_position_returns_documented_contract() -> None:
     response = client.post(
         "/api/analyze-position",
         json={
-            "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+            "fen": KINGS_PAWN_FEN,
             "pgn": "1. e4",
             "moves": ["e2e4"],
             "level": "debutant",
@@ -148,7 +247,10 @@ def test_analyze_position_returns_documented_contract() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    session_id = body.pop("session_id")
+    assert isinstance(session_id, str) and session_id
+    assert body == {
         "opening": {
             "eco": "B00",
             "name": "King's Pawn Game",
@@ -165,6 +267,10 @@ def test_analyze_position_returns_documented_contract() -> None:
                 "white": None,
                 "draws": None,
                 "black": None,
+                "average_rating": None,
+                "move_share": None,
+                "relevant": True,
+                "badges": [],
             },
             {
                 "uci": "c7c5",
@@ -175,14 +281,33 @@ def test_analyze_position_returns_documented_contract() -> None:
                 "white": None,
                 "draws": None,
                 "black": None,
+                "average_rating": None,
+                "move_share": None,
+                "relevant": True,
+                "badges": [],
             },
         ],
+        "masters_moves": [],
+        "masters_stats": {
+            "source": "masters-opening-explorer",
+            "games": 0,
+            "white": 0.0,
+            "draws": 0.0,
+            "black": 0.0,
+        },
         "lichess_stats": {
             "source": "seed-lichess-cache",
             "games": 1200000,
             "white": 0.49,
             "draws": 0.05,
             "black": 0.46,
+        },
+        "source_confidence": {
+            "total_games": 1200000,
+            "min_position_games": 100,
+            "min_move_share": 0.001,
+            "low_confidence": False,
+            "reason": None,
         },
         "rag_context": [
                 {
@@ -200,7 +325,13 @@ def test_analyze_position_returns_documented_contract() -> None:
                 "source": "youtube-search-fallback",
             }
         ],
-        "fallbacks_used": ["demo_opening_seed", "lichess_disabled", "youtube_search_fallback"],
+        "fallbacks_used": [
+            "demo_opening_seed",
+            "lichess_disabled",
+            "masters_unavailable",
+            "youtube_search_fallback",
+        ],
+        "cache": {"lichess": "miss", "masters": "miss", "stockfish": "skipped"},
     }
 
 
@@ -209,7 +340,7 @@ def test_analyze_position_uses_lichess_stats_when_available() -> None:
     response = client.post(
         "/api/analyze-position",
         json={
-            "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+            "fen": KINGS_PAWN_FEN,
             "pgn": "1. e4",
             "moves": ["e2e4"],
             "level": "debutant",
@@ -227,6 +358,67 @@ def test_analyze_position_uses_lichess_stats_when_available() -> None:
     }
     assert "lichess_disabled" not in body["fallbacks_used"]
     assert "lichess_unavailable" not in body["fallbacks_used"]
+    assert body["cache"]["lichess"] == "miss"
+
+
+def test_analyze_position_returns_masters_stats_when_available() -> None:
+    class MastersClient(SuccessfulLichessClient):
+        def fetch_masters_analysis(self, _moves: list[str]) -> LichessExplorerResult:
+            return LichessExplorerResult(
+                stats=LichessStats(
+                    source="masters-opening-explorer",
+                    games=50,
+                    white=0.42,
+                    draws=0.28,
+                    black=0.30,
+                ),
+                recommended_moves=(
+                    RecommendedMove(
+                        uci="g8f6",
+                        san="Nf6",
+                        description="Coup populaire selon Lichess Opening Explorer.",
+                        source="masters-opening-explorer",
+                        games=25,
+                        white=0.4,
+                        draws=0.3,
+                        black=0.3,
+                    ),
+                ),
+            )
+
+    app.dependency_overrides[get_lichess_client] = lambda: MastersClient()
+    response = client.post(
+        "/api/analyze-position",
+        json={
+            "fen": KINGS_PAWN_FEN,
+            "pgn": "1. e4",
+            "moves": ["e2e4"],
+            "level": "debutant",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["masters_stats"] == {
+        "source": "masters-opening-explorer",
+        "games": 50,
+        "white": 0.42,
+        "draws": 0.28,
+        "black": 0.3,
+    }
+    assert body["masters_moves"][0]["games"] == 25
+    assert body["cache"]["masters"] == "miss"
+
+    replay = _post_analysis(
+        {
+            "fen": KINGS_PAWN_FEN,
+            "pgn": "1. e4",
+            "moves": ["e2e4"],
+            "level": "debutant",
+        }
+    )
+    assert replay["cache"]["masters"] == "hit"
+    assert replay["masters_stats"] == body["masters_stats"]
 
 
 def test_analyze_position_uses_lichess_moves_when_opening_is_missing() -> None:
@@ -234,7 +426,7 @@ def test_analyze_position_uses_lichess_moves_when_opening_is_missing() -> None:
     response = client.post(
         "/api/analyze-position",
         json={
-            "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+            "fen": KINGS_PAWN_FEN,
             "pgn": "1. e4",
             "moves": ["e2e4"],
             "level": "debutant",
@@ -256,6 +448,10 @@ def test_analyze_position_uses_lichess_moves_when_opening_is_missing() -> None:
             "white": 0.6,
             "draws": 0.1,
             "black": 0.3,
+            "average_rating": None,
+            "move_share": 0.6,
+            "relevant": True,
+            "badges": ["Lichess"],
         }
     ]
 
@@ -264,12 +460,7 @@ def test_analyze_position_uses_lichess_moves_when_local_opening_unknown() -> Non
     app.dependency_overrides[get_lichess_client] = lambda: LichessMovesOnlyClient()
     response = client.post(
         "/api/analyze-position",
-        json={
-            "fen": "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1",
-            "pgn": "1. Nf3",
-            "moves": ["g1f3"],
-            "level": "debutant",
-        },
+        json=UNMATCHED_PAYLOAD,
     )
 
     assert response.status_code == 200
@@ -285,7 +476,7 @@ def test_analyze_position_reports_lichess_fallback() -> None:
     response = client.post(
         "/api/analyze-position",
         json={
-            "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+            "fen": KINGS_PAWN_FEN,
             "pgn": "1. e4",
             "moves": ["e2e4"],
             "level": "debutant",
@@ -304,12 +495,7 @@ def test_analyze_position_uses_lichess_opening_when_local_seed_unknown() -> None
     app.dependency_overrides[get_lichess_client] = lambda: SuccessfulLichessClient()
     response = client.post(
         "/api/analyze-position",
-        json={
-            "fen": "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1",
-            "pgn": "1. Nf3",
-            "moves": ["g1f3"],
-            "level": "debutant",
-        },
+        json=UNMATCHED_PAYLOAD,
     )
 
     assert response.status_code == 200
@@ -330,6 +516,10 @@ def test_analyze_position_uses_lichess_opening_when_local_seed_unknown() -> None
             "white": 0.6,
             "draws": 0.1,
             "black": 0.3,
+            "average_rating": None,
+            "move_share": 0.6,
+            "relevant": True,
+            "badges": ["Lichess"],
         }
     ]
     assert body["rag_context"] == [
@@ -349,7 +539,7 @@ def test_analyze_position_prefers_lichess_opening_over_local_seed() -> None:
     response = client.post(
         "/api/analyze-position",
         json={
-            "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+            "fen": KINGS_PAWN_FEN,
             "pgn": "1. e4",
             "moves": ["e2e4"],
             "level": "intermediaire",
@@ -412,12 +602,7 @@ def test_analyze_position_uses_most_specific_known_prefix() -> None:
 def test_analyze_position_reports_unmatched_opening() -> None:
     response = client.post(
         "/api/analyze-position",
-        json={
-            "fen": "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1",
-            "pgn": "1. Nf3",
-            "moves": ["g1f3"],
-            "level": "debutant",
-        },
+        json=UNMATCHED_PAYLOAD,
     )
 
     assert response.status_code == 200
@@ -431,11 +616,28 @@ def test_analyze_position_reports_unmatched_opening() -> None:
     assert "opening_not_matched" in body["fallbacks_used"]
 
 
+def test_analyze_position_runs_stockfish_for_unmatched_position() -> None:
+    app.dependency_overrides[get_stockfish_service] = lambda: SuccessfulStockfishService()
+
+    response = client.post(
+        "/api/analyze-position",
+        json=UNMATCHED_PAYLOAD,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["stockfish"] == {
+        "status": "ok",
+        "best_move": "g1f3",
+        "score": {"type": "cp", "value": 24},
+        "depth": 12,
+    }
+
+
 def test_analyze_position_rejects_unknown_level() -> None:
     response = client.post(
         "/api/analyze-position",
         json={
-            "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+            "fen": KINGS_PAWN_FEN,
             "pgn": "1. e4",
             "moves": ["e2e4"],
             "level": "expert",
@@ -457,3 +659,265 @@ def test_analyze_position_rejects_invalid_fen() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_stockfish_endpoint_returns_evaluation() -> None:
+    app.dependency_overrides[get_stockfish_service] = lambda: SuccessfulStockfishService()
+
+    response = client.post(
+        "/api/stockfish/evaluate",
+        json={
+            "fen": AFTER_NF3_FEN,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "best_move": "g1f3",
+        "score": {"type": "cp", "value": 24},
+        "depth": 12,
+    }
+
+
+def test_analyze_position_serves_lichess_from_cache_on_second_call() -> None:
+    counting = CountingLichessClient()
+    app.dependency_overrides[get_lichess_client] = lambda: counting
+    payload = {
+        "fen": KINGS_PAWN_FEN,
+        "pgn": "1. e4",
+        "moves": ["e2e4"],
+        "level": "debutant",
+    }
+
+    first = _post_analysis(payload)
+
+    assert first["cache"]["lichess"] == "miss"
+    assert counting.calls == 1
+
+    second = _post_analysis(payload)
+
+    assert second["cache"]["lichess"] == "hit"
+    assert counting.calls == 1
+    assert second["lichess_stats"] == first["lichess_stats"]
+    assert second["opening"] == first["opening"]
+    assert second["recommended_moves"] == first["recommended_moves"]
+
+
+def test_analyze_position_does_not_cache_lichess_fallback_responses() -> None:
+    counting = CountingFallbackLichessClient()
+    app.dependency_overrides[get_lichess_client] = lambda: counting
+    payload = {
+        "fen": KINGS_PAWN_FEN,
+        "pgn": "1. e4",
+        "moves": ["e2e4"],
+        "level": "debutant",
+    }
+
+    first = _post_analysis(payload)
+    second = _post_analysis(payload)
+
+    assert first["cache"]["lichess"] == "miss"
+    assert second["cache"]["lichess"] == "miss"
+    assert counting.calls == 2
+    assert "lichess_unavailable" in second["fallbacks_used"]
+
+
+def test_analyze_position_serves_stockfish_from_cache_on_second_call() -> None:
+    counting = CountingStockfishService()
+    app.dependency_overrides[get_stockfish_service] = lambda: counting
+
+    first = _post_analysis(UNMATCHED_PAYLOAD)
+    second = _post_analysis(UNMATCHED_PAYLOAD)
+
+    assert first["cache"]["stockfish"] == "miss"
+    assert second["cache"]["stockfish"] == "hit"
+    assert counting.calls == 1
+    assert second["stockfish"] == first["stockfish"]
+
+
+def test_analyze_position_creates_session_lazily_with_first_analyzed_move() -> None:
+    body = _post_analysis(
+        {
+            "fen": KINGS_PAWN_FEN,
+            "pgn": "1. e4",
+            "moves": ["e2e4"],
+            "level": "debutant",
+        }
+    )
+
+    session = _get_session(body["session_id"])
+    assert session["status"] == "active"
+    assert session["ended_at"] is None
+    assert [move["uci"] for move in session["moves"]] == ["e2e4"]
+    assert session["moves"][0]["ply"] == 1
+    assert session["moves"][0]["san"] == "e4"
+    assert session["moves"][0]["fen"] == KINGS_PAWN_FEN
+    assert session["moves"][0]["pgn"] == "1. e4"
+    assert len(session["analyses"]) == 1
+    assert session["analyses"][0]["fen"] == KINGS_PAWN_FEN
+    assert session["analyses"][0]["response"]["session_id"] == body["session_id"]
+
+
+def test_analyze_position_appends_moves_to_the_same_session() -> None:
+    first = _post_analysis(
+        {
+            "fen": KINGS_PAWN_FEN,
+            "pgn": "1. e4",
+            "moves": ["e2e4"],
+            "level": "debutant",
+        }
+    )
+
+    second = _post_analysis(
+        {
+            "fen": AFTER_E4_E5_FEN,
+            "pgn": "1. e4 e5",
+            "moves": ["e2e4", "e7e5"],
+            "level": "debutant",
+            "session_id": first["session_id"],
+        }
+    )
+
+    assert second["session_id"] == first["session_id"]
+
+    session = _get_session(first["session_id"])
+    assert [move["uci"] for move in session["moves"]] == ["e2e4", "e7e5"]
+    assert [move["ply"] for move in session["moves"]] == [1, 2]
+    assert session["moves"][1]["san"] == "e5"
+    assert session["moves"][1]["pgn"] == "1. e4 e5"
+
+
+def test_navigation_request_does_not_truncate_the_session_line() -> None:
+    first = _post_analysis(
+        {
+            "fen": AFTER_E4_E5_FEN,
+            "pgn": "1. e4 e5",
+            "moves": ["e2e4", "e7e5"],
+            "level": "debutant",
+        }
+    )
+
+    navigation = _post_analysis(
+        {
+            "fen": KINGS_PAWN_FEN,
+            "pgn": "1. e4",
+            "moves": ["e2e4"],
+            "level": "debutant",
+            "session_id": first["session_id"],
+        }
+    )
+
+    assert navigation["session_id"] == first["session_id"]
+    session = _get_session(first["session_id"])
+    assert [move["uci"] for move in session["moves"]] == ["e2e4", "e7e5"]
+
+
+def test_new_move_after_going_back_discards_the_future_variation() -> None:
+    first = _post_analysis(
+        {
+            "fen": AFTER_E4_E5_FEN,
+            "pgn": "1. e4 e5",
+            "moves": ["e2e4", "e7e5"],
+            "level": "debutant",
+        }
+    )
+
+    branch = _post_analysis(
+        {
+            "fen": AFTER_E4_D5_FEN,
+            "pgn": "1. e4 d5",
+            "moves": ["e2e4", "d7d5"],
+            "level": "debutant",
+            "session_id": first["session_id"],
+        }
+    )
+
+    assert branch["session_id"] == first["session_id"]
+    session = _get_session(first["session_id"])
+    assert [move["uci"] for move in session["moves"]] == ["e2e4", "d7d5"]
+    assert session["moves"][1]["san"] == "d5"
+
+
+def test_analyze_position_degrades_when_mongo_unavailable() -> None:
+    app.dependency_overrides[get_cache_store] = lambda: CacheStore(
+        database=None,
+        settings=get_settings().mongodb,
+    )
+    app.dependency_overrides[get_session_store] = lambda: SessionStore(database=None)
+
+    body = _post_analysis(
+        {
+            "fen": KINGS_PAWN_FEN,
+            "pgn": "1. e4",
+            "moves": ["e2e4"],
+            "level": "debutant",
+        }
+    )
+
+    assert body["session_id"] is None
+    assert "mongo_sessions_unavailable" in body["fallbacks_used"]
+    assert body["cache"] == {
+        "lichess": "skipped",
+        "masters": "skipped",
+        "stockfish": "skipped",
+    }
+    assert body["opening"]["matched"] is True
+
+
+def test_session_endpoints_roundtrip() -> None:
+    created = client.post("/api/sessions")
+
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+    assert created.json()["status"] == "active"
+    assert created.json()["moves"] == []
+
+    move = client.post(
+        f"/api/sessions/{session_id}/moves",
+        json={"ply": 1, "uci": "e2e4", "san": "e4", "fen": KINGS_PAWN_FEN},
+    )
+
+    assert move.status_code == 200
+    assert [stored["uci"] for stored in move.json()["moves"]] == ["e2e4"]
+    assert move.json()["moves"][0]["pgn"] == "1. e4"
+
+    conflict = client.post(
+        f"/api/sessions/{session_id}/moves",
+        json={"ply": 3, "uci": "e7e5", "san": "e5", "fen": AFTER_E4_E5_FEN},
+    )
+
+    assert conflict.status_code == 409
+
+    analysis = client.post(
+        f"/api/sessions/{session_id}/analyses",
+        json={"position_key": "key-1", "fen": KINGS_PAWN_FEN, "response": {"coach": "demo"}},
+    )
+
+    assert analysis.status_code == 200
+    assert analysis.json()["analyses"][0]["position_key"] == "key-1"
+
+    ended = client.post(f"/api/sessions/{session_id}/end")
+
+    assert ended.status_code == 200
+    assert ended.json()["status"] == "ended"
+    assert ended.json()["ended_at"] is not None
+
+    missing = client.get("/api/sessions/000000000000000000000099")
+    assert missing.status_code == 404
+
+
+def test_session_endpoints_report_mongo_unavailability() -> None:
+    app.dependency_overrides[get_session_store] = lambda: SessionStore(database=None)
+
+    assert client.post("/api/sessions").status_code == 503
+    assert client.get("/api/sessions/000000000000000000000001").status_code == 503
+
+
+class CountingFallbackLichessClient(FallbackLichessClient):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def fetch_explorer_analysis(self, _moves: list[str]) -> LichessExplorerResult:
+        self.calls += 1
+        return super().fetch_explorer_analysis(_moves)

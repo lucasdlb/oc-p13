@@ -1,13 +1,37 @@
 <section class="history-card">
-  <div>
-    <p class="eyebrow">Historique</p>
-    <h2>Coups joues</h2>
+  <div class="history-header">
+    <div>
+      <p class="eyebrow">Historique</p>
+      <h2>Coups joues</h2>
+    </div>
+
+    <div class="navigation">
+      <button
+        type="button"
+        class="nav-button"
+        aria-label="Position precedente"
+        [disabled]="currentIndex() === 0"
+        (click)="goBack.emit()"
+      >
+        &#8592;
+      </button>
+      <span class="position-indicator">{{ currentIndex() }} / {{ totalMoves() }}</span>
+      <button
+        type="button"
+        class="nav-button"
+        aria-label="Position suivante"
+        [disabled]="currentIndex() >= totalMoves()"
+        (click)="goForward.emit()"
+      >
+        &#8594;
+      </button>
+    </div>
   </div>
 
   @if (moves().length) {
     <ol class="moves">
       @for (move of moves(); track $index) {
-        <li>{{ move }}</li>
+        <li [class.current]="$index === currentIndex() - 1">{{ move }}</li>
       }
     </ol>
   } @else {
@@ -24,4 +48,6 @@
       <dd>{{ fen() }}</dd>
     </div>
   </dl>
+
+  <p class="keyboard-hint">Fleches gauche et droite du clavier pour naviguer.</p>
 </section>

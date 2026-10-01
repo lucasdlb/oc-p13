@@ -53,9 +53,10 @@ execution locale
 2. FastAPI valide la position avec `python-chess`.
 3. LangGraph orchestre les noeuds d'analyse.
 4. Le matching local cherche l'ouverture dans MongoDB.
-5. Lichess fournit statistiques et coups populaires si disponibles.
+5. Lichess fournit statistiques et coups populaires filtres par plage de niveau joueur si disponibles.
+5a. Masters fournit une vue theorique separee des coups issus de parties de maitres.
 6. Milvus fournit le contexte pedagogique pertinent.
-7. Stockfish est appele si la theorie est absente, faible ou explicitement demandee.
+7. Stockfish est appele si la theorie est absente, si aucun coup candidat pertinent ne reste, ou si la confiance statistique Lichess est faible.
 8. YouTube renvoie des videos pertinentes ou un lien fallback.
 9. Le coach produit une reponse contrainte par les resultats precedents.
 
@@ -99,7 +100,9 @@ Reponse minimale :
     "source": "lichess-org/chess-openings"
   },
   "recommended_moves": [],
+  "masters_moves": [],
   "lichess_stats": {},
+  "source_confidence": {},
   "rag_context": [],
   "coach_explanation": "...",
   "stockfish": null,

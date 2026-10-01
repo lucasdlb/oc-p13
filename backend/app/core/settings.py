@@ -24,9 +24,45 @@ class LichessSettings(BaseModel):
     token: str | None = None
 
 
+class StockfishSettings(BaseModel):
+    binary: str = Field(default="stockfish", min_length=1)
+    depth: int = Field(default=12, ge=1, le=30)
+    timeout_seconds: float = Field(default=5.0, gt=0)
+
+
+class MongoSettings(BaseModel):
+    enabled: bool = True
+    uri: str = Field(default="mongodb://localhost:27017", min_length=1)
+    database: str = Field(default="chess_agent", min_length=1)
+    connect_timeout_seconds: float = Field(default=1.5, gt=0)
+    lichess_cache_ttl_seconds: int = Field(default=86400, ge=1)
+    videos_cache_ttl_seconds: int = Field(default=604800, ge=1)
+
+
+class RatingPresetSettings(BaseModel):
+    min: int = Field(ge=0)
+    max: int = Field(ge=0)
+
+
+class RecommendationSettings(BaseModel):
+    min_move_share: float = Field(default=0.001, ge=0, le=1)
+    min_position_games: int = Field(default=100, ge=0)
+    default_moves: int = Field(default=12, gt=0)
+    rating_presets: dict[str, RatingPresetSettings] = Field(
+        default_factory=lambda: {
+            "debutant": RatingPresetSettings(min=1000, max=1400),
+            "intermediaire": RatingPresetSettings(min=1600, max=2000),
+            "avance": RatingPresetSettings(min=2200, max=2500),
+        }
+    )
+
+
 class Settings(BaseModel):
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     lichess: LichessSettings = Field(default_factory=LichessSettings)
+    stockfish: StockfishSettings = Field(default_factory=StockfishSettings)
+    mongodb: MongoSettings = Field(default_factory=MongoSettings)
+    recommendations: RecommendationSettings = Field(default_factory=RecommendationSettings)
 
 
 def _config_path() -> Path:
@@ -49,26 +85,39 @@ def get_settings() -> Settings:
 
 
 def _without_config_secrets(config: dict) -> dict:
-    lichess = config.get("lichess")
-    if not isinstance(lichess, dict) or "token" not in lichess:
-        return config
+    stripped = {**config}
 
-    logger.warning(
-        "lichess.token found in config.toml is ignored: "
-        "secrets must come from LICHESS_TOKEN in the environment or .env"
-    )
-    merged = {**config}
-    merged["lichess"] = {key: value for key, value in lichess.items() if key != "token"}
-    return merged
+    lichess = stripped.get("lichess")
+    if isinstance(lichess, dict) and "token" in lichess:
+        logger.warning(
+            "lichess.token found in config.toml is ignored: "
+            "secrets must come from LICHESS_TOKEN in the environment or .env"
+        )
+        stripped["lichess"] = {key: value for key, value in lichess.items() if key != "token"}
+
+    mongodb = stripped.get("mongodb")
+    if isinstance(mongodb, dict) and "uri" in mongodb:
+        logger.warning(
+            "mongodb.uri found in config.toml is ignored: "
+            "the URI is environment-specific and must come from MONGODB_URI "
+            "in the environment or .env"
+        )
+        stripped["mongodb"] = {key: value for key, value in mongodb.items() if key != "uri"}
+
+    return stripped
 
 
 def _with_secret_env(config: dict) -> dict:
-    lichess_token = os.environ.get("LICHESS_TOKEN") or _read_dotenv_value("LICHESS_TOKEN")
-    if not lichess_token:
-        return config
-
     merged = {**config}
-    merged["lichess"] = {**merged.get("lichess", {}), "token": lichess_token}
+
+    lichess_token = os.environ.get("LICHESS_TOKEN") or _read_dotenv_value("LICHESS_TOKEN")
+    if lichess_token:
+        merged["lichess"] = {**merged.get("lichess", {}), "token": lichess_token}
+
+    mongo_uri = os.environ.get("MONGODB_URI") or _read_dotenv_value("MONGODB_URI")
+    if mongo_uri:
+        merged["mongodb"] = {**merged.get("mongodb", {}), "uri": mongo_uri}
+
     return merged
 
 

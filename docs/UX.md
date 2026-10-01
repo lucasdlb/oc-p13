@@ -28,7 +28,8 @@ AppComponent
 3. Le frontend met a jour FEN, PGN et coups UCI.
 4. Le frontend appelle `POST /api/analyze-position`.
 5. L'interface affiche un etat de chargement lisible.
-6. L'analyse apparait avec ouverture, coups, explication, stats, Stockfish si utile, et videos ou fallback.
+6. L'analyse apparait avec ouverture, coups, explication, stats, Stockfish si utile, Masters si disponible, et videos ou fallback.
+7. Le niveau pedagogique initialise une plage de niveau Lichess ; l'utilisateur peut ajuster les bornes min/max pour filtrer les statistiques pratiques.
 
 ## Layout desktop
 
@@ -73,6 +74,8 @@ L'UI doit eviter de presenter une explication IA comme magique. Lorsque possible
 
 - ouverture identifiee et source ;
 - statistiques Lichess ;
+- coups Masters dans une section separee lorsque disponibles ;
+- badges compacts de source ou de faible echantillon sur les coups ;
 - indication que Stockfish a ete appele ;
 - videos ou fallback YouTube ;
 - fallback utilise si une brique est degradee.

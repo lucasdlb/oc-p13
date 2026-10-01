@@ -7,3 +7,32 @@ request_id_header = "X-Request-ID"
 enabled = true
 base_url = "https://explorer.lichess.org"
 timeout_seconds = 2.0
+
+[stockfish]
+binary = "stockfish"
+depth = 12
+timeout_seconds = 5.0
+
+[mongodb]
+enabled = true
+database = "chess_agent"
+connect_timeout_seconds = 1.5
+lichess_cache_ttl_seconds = 86400
+videos_cache_ttl_seconds = 604800
+
+[recommendations]
+min_move_share = 0.001
+min_position_games = 100
+default_moves = 12
+
+[recommendations.rating_presets.debutant]
+min = 1000
+max = 1400
+
+[recommendations.rating_presets.intermediaire]
+min = 1600
+max = 2000
+
+[recommendations.rating_presets.avance]
+min = 2200
+max = 2500
