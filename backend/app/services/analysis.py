@@ -25,6 +25,11 @@ from backend.app.services.lichess import (
     LichessExplorerResult,
 )
 from backend.app.services.opening_book import DEMO_OPENING_SOURCE, match_opening
+from backend.app.services.intent_router import CandidateMove, IntentRouter, IntentRouterContext, RouterSource
+from backend.app.services.opening_tree import OpeningTree
+from backend.app.services.rag import RagService
+from backend.app.services.retrieval_contracts import OpeningTreeContext, RetrievedContext
+from backend.app.services.retrieval_plan_builder import build_retrieval_plan
 from backend.app.services.session_store import SessionStore, build_move_docs
 from backend.app.services.stockfish import StockfishService, engine_version
 
@@ -38,6 +43,9 @@ def analyze_position(
     stockfish_service: StockfishService,
     cache_store: CacheStore,
     session_store: SessionStore,
+    opening_tree: OpeningTree | None = None,
+    intent_router: IntentRouter | None = None,
+    rag_service: RagService | None = None,
 ) -> AnalyzePositionResponse:
     all_settings = get_settings()
     settings = all_settings.recommendations
@@ -94,6 +102,16 @@ def analyze_position(
     if masters_result.fallback:
         fallbacks_used.append(masters_result.fallback)
 
+    rag_context, rag_context_text, rag_fallbacks = _retrieve_rag_context(
+        request,
+        opening,
+        context,
+        opening_tree,
+        intent_router,
+        rag_service,
+    )
+    fallbacks_used.extend(rag_fallbacks)
+
     stockfish = _run_stockfish_if_needed(
         stockfish_service,
         cache_store,
@@ -129,14 +147,8 @@ def analyze_position(
         masters_stats=masters_result.stats,
         lichess_stats=lichess_result.stats,
         source_confidence=confidence,
-        rag_context=[
-            RagContext(
-                text=context,
-                source=_rag_source(opening),
-                url=None,
-            )
-        ],
-        coach_explanation=_coach_explanation(opening, request.level, recommended_moves, context),
+        rag_context=rag_context,
+        coach_explanation=_coach_explanation(opening, request.level, recommended_moves, rag_context_text),
         stockfish=stockfish,
         videos=[
             Video(
@@ -421,6 +433,126 @@ def _run_stockfish_if_needed(
 
     cache_status["stockfish"] = "skipped"
     return None
+
+
+def _retrieve_rag_context(
+    request: AnalyzePositionRequest,
+    opening: Opening,
+    fallback_text: str,
+    opening_tree: OpeningTree | None,
+    intent_router: IntentRouter | None,
+    rag_service: RagService | None,
+) -> tuple[list[RagContext], str, list[str]]:
+    fallback_context = _fallback_rag_context(opening, fallback_text)
+    if opening_tree is None or intent_router is None or rag_service is None:
+        return [fallback_context], fallback_text, []
+
+    try:
+        tree_context = opening_tree.context_for_position(moves=tuple(request.moves), fen=request.fen)
+        decision = intent_router.classify(_intent_context(request, tree_context))
+        plan = build_retrieval_plan(tree_context, decision)
+        result = rag_service.retrieve(plan, _rag_query(request, opening, tree_context))
+    except Exception:  # noqa: BLE001 - RAG must not break the analysis endpoint
+        return [fallback_context], fallback_text, ["rag_unavailable"]
+
+    fallbacks = [
+        *_intent_router_fallback_labels(decision.source),
+        *[_rag_fallback_label(reason) for reason in result.fallback_reasons],
+    ]
+    contexts = [_retrieved_context_to_api(context) for context in result.contexts]
+    if not contexts:
+        return [fallback_context], fallback_text, fallbacks
+
+    return contexts, "\n\n".join(context.text for context in result.contexts), fallbacks
+
+
+def _intent_context(request: AnalyzePositionRequest, tree_context: OpeningTreeContext) -> IntentRouterContext:
+    current = tree_context.current
+    return IntentRouterContext(
+        question=request.question,
+        level=request.level,
+        moves=tuple(request.moves),
+        fen=request.fen,
+        current_opening_name=current.opening_name if current else None,
+        current_eco=current.eco_code if current else None,
+        current_node_id=current.node_id if current else None,
+        legal_child_moves=tuple(_candidate_move(child) for child in tree_context.children),
+    )
+
+
+def _candidate_move(child) -> CandidateMove:  # type: ignore[no-untyped-def]
+    return CandidateMove(
+        san=child.entry_move or (child.san[-1] if child.san else ""),
+        uci=child.uci[-1] if child.uci else None,
+        opening_name=child.opening_name,
+        eco_code=child.eco_code,
+        opening_node_id=child.node_id,
+    )
+
+
+def _rag_query(
+    request: AnalyzePositionRequest,
+    opening: Opening,
+    tree_context: OpeningTreeContext,
+) -> str:
+    parts = [
+        f"Opening: {opening.eco} {opening.name}",
+        f"Level: {request.level}",
+        f"PGN: {request.pgn}",
+        "Intent: explain plans and ideas for the current opening position",
+    ]
+    if request.question:
+        parts.insert(0, f"Question: {request.question}")
+    if tree_context.current is not None:
+        parts.append(f"Current node: {tree_context.current.opening_name}")
+    return "\n".join(parts)
+
+
+def _retrieved_context_to_api(context: RetrievedContext) -> RagContext:
+    return RagContext(
+        text=context.text,
+        source=context.source,
+        url=context.source_url,
+        chunk_id=context.chunk_id,
+        license_or_terms=context.license_or_terms,
+        page_id=context.page_id,
+        section_index=context.section_index,
+        part_index=context.part_index,
+        section_title=context.section_title,
+        relation_to_position=context.relation_to_position,
+        entry_move=context.entry_move,
+        opening_name=context.opening_name,
+        eco_code=context.eco_code,
+    )
+
+
+def _fallback_rag_context(opening: Opening, text: str) -> RagContext:
+    return RagContext(
+        text=text,
+        source=_rag_source(opening),
+        url=None,
+        relation_to_position="fallback",
+        opening_name=opening.name,
+        eco_code=opening.eco,
+    )
+
+
+def _rag_fallback_label(reason: str) -> str:
+    if reason == "rag_embedding_unavailable":
+        return "ollama_unavailable"
+    if reason == "rag_store_unavailable":
+        return "milvus_unavailable"
+    return reason or "rag_unavailable"
+
+
+def _intent_router_fallback_labels(source: RouterSource) -> list[str]:
+    if source == "fallback_after_provider_error":
+        return ["intent_router_provider_unavailable"]
+    if source == "fallback_after_low_confidence":
+        return ["intent_router_low_confidence"]
+    if source == "fallback_after_invalid_response":
+        return ["intent_router_invalid_response"]
+    return []
 
 
 def _lichess_context(opening: Opening) -> str:

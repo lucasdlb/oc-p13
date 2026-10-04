@@ -55,3 +55,23 @@ _Avoid_: contexte RAG si le public est non technique
 **Fallback**:
 Comportement documente qui degrade une fonctionnalite sans casser le parcours de demonstration.
 _Avoid_: hack, contournement cache
+
+**Chunk**:
+Fragment de prose pedagogique, vectorise et stocke dans Milvus. Un chunk reste lie a sa source et a ses metadonnees (`eco_code`, `opening_name`, `chunk_title`) et porte son identite de page (`page_id`) et son ordre (`section_index`, `part_index`) pour permettre la reconstruction.
+_Avoid_: document, passage
+
+**Donnee structuree d'ouverture**:
+Description formelle d'une ouverture (nom, code ECO, ligne de coups) utilisee pour le matching et la jointure `eco_code`, par opposition a la prose pedagogique. `lichess-org/chess-openings` est de ce type et n'est pas vectorisee dans Milvus.
+_Avoid_: corpus, document
+
+**Adaptateur d'ingestion**:
+Composant qui transforme le contenu brut d'une source (TSV chess-openings, page Wikibooks) en chunks avec le schema commun. Un adaptateur par source, un seul pipeline de retrieval.
+_Avoid_: connecteur, scraper
+
+**Retrieval**:
+Recherche par similarite semantique des chunks pertinents pour une position ou une question, dans la collection Milvus.
+_Avoid_: recherche documentaire, lookup
+
+**Attribution de source**:
+Rattachement explicite d'une affirmation du coach a l'id de la source qui la justifie, valide cote backend avant affichage.
+_Avoid_: citation, reference bibliographique

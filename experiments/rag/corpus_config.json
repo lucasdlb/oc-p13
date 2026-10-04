@@ -1,0 +1,25 @@
+{
+  "openings_tsv": {
+    "base_url": "https://raw.githubusercontent.com/lichess-org/chess-openings/master",
+    "files": ["a.tsv", "b.tsv", "c.tsv", "d.tsv", "e.tsv"]
+  },
+  "wikibooks": {
+    "api_url": "https://en.wikibooks.org/w/api.php",
+    "user_agent": "oc-p13-rag/0.1 (research; contact: POC FFE)",
+    "pages": [
+      {"title": "Chess Opening Theory/1. e4/1...c5", "eco": "B20", "opening_name": "Sicilian Defence"},
+      {"title": "Chess Opening Theory/1. e4/1...c5/2. Nf3/2...d6/3. d4/3...cxd4/4. Nxd4/4...Nf6/5. Nc3/5...a6", "eco": "B90", "opening_name": "Sicilian Defence, Najdorf Variation"},
+      {"title": "Chess Opening Theory/1. e4/1...e5/2. Nf3/2...Nc6/3. Bb5", "eco": "C60", "opening_name": "Ruy Lopez"},
+      {"title": "Chess Opening Theory/1. e4/1...e5/2. Nf3/2...Nc6/3. Bb5/3...a6", "eco": "C68", "opening_name": "Ruy Lopez, Morphy Defence"},
+      {"title": "Chess Opening Theory/1. e4/1...e5/2. Nf3/2...Nc6/3. Bc4", "eco": "C50", "opening_name": "Italian Game"},
+      {"title": "Chess Opening Theory/1. e4/1...e6", "eco": "C00", "opening_name": "French Defence"},
+      {"title": "Chess Opening Theory/1. e4/1...e6/2. d4/2...d5/3. Nc3/3...Bb4", "eco": "C18", "opening_name": "French Defence, Winawer Variation"},
+      {"title": "Chess Opening Theory/1. e4/1...c6", "eco": "B10", "opening_name": "Caro-Kann Defence"},
+      {"title": "Chess Opening Theory/1. d4/1...d5/2. c4", "eco": "D06", "opening_name": "Queen's Gambit"},
+      {"title": "Chess Opening Theory/1. d4/1...Nf6/2. c4/2...g6", "eco": "E60", "opening_name": "King's Indian Defence"},
+      {"title": "Chess Opening Theory/1. e4/1...d5", "eco": "B01", "opening_name": "Scandinavian Defence"},
+      {"title": "Chess Opening Theory/1. e4/1...e5/2. f4", "eco": "C30", "opening_name": "King's Gambit"},
+      {"title": "Chess Opening Theory/1. d4/1...Nf6/2. c4/2...e6/3. Nc3/3...Bb4", "eco": "E20", "opening_name": "Nimzo-Indian Defence"}
+    ]
+  }
+}

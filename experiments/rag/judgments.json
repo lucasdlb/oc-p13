@@ -1,0 +1,178 @@
+{
+  "description": "Frozen passage-level relevance judgments for the curated prose corpus. PROSE queries list the source pages (and the sections that actually contain the answer) that satisfy the query. Out-of-theory and coverage-gap queries are reported separately and excluded from the aggregate means. Judgments are anchored on page_id = '<source>::<wikibooks page title>' plus the section title as produced by WikibooksAdapter.",
+  "judgments": {
+    "sicilienne-najdorf": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. e4/1...c5/2. Nf3/2...d6/3. d4/3...cxd4/4. Nxd4/4...Nf6/5. Nc3/5...a6",
+          "sections": [
+            "5...a6 · Najdorf variation",
+            "Develop a bishop",
+            "Attack on the kingside",
+            "Lock up the queenside",
+            "Miscellaneous moves"
+          ]
+        }
+      ]
+    },
+    "gambit-dame-refuse": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. d4/1...d5/2. c4",
+          "sections": ["Decline the gambit"]
+        }
+      ]
+    },
+    "espagnole": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. e4/1...e5/2. Nf3/2...Nc6/3. Bb5",
+          "sections": [
+            "3. Bb5 · Ruy López or Spanish game",
+            "Morphy defence",
+            "Berlin defence",
+            "Principal sidelines",
+            "Minor sidelines",
+            "History"
+          ]
+        }
+      ]
+    },
+    "attaque-autrichienne": {
+      "kind": "coverage_gap",
+      "relevant": []
+    },
+    "francaise-winawer": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. e4/1...e6/2. d4/2...d5/3. Nc3/3...Bb4",
+          "sections": ["3...Bb4 · Winawer variation"]
+        }
+      ]
+    },
+    "ligne-espagnole": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. e4/1...e5/2. Nf3/2...Nc6/3. Bb5",
+          "sections": [
+            "3. Bb5 · Ruy López or Spanish game",
+            "Morphy defence",
+            "Berlin defence",
+            "Principal sidelines",
+            "Minor sidelines",
+            "History"
+          ]
+        }
+      ]
+    },
+    "sortie-de-theorie": {
+      "kind": "out_of_theory",
+      "relevant": []
+    },
+    "sicilienne-debutant": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. e4/1...c5",
+          "sections": [
+            "1...c5 · Sicilian defence",
+            "Open the position",
+            "Keep the position closed",
+            "Play d4 and keep it there",
+            "Other moves",
+            "Bad moves"
+          ]
+        }
+      ]
+    },
+    "dame-c4": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. d4/1...d5/2. c4",
+          "sections": [
+            "2. c4 · Queen's gambit",
+            "Accept the gambit",
+            "Decline the gambit",
+            "Countergambit"
+          ]
+        }
+      ]
+    },
+    "scandinave": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. e4/1...d5",
+          "sections": [
+            "1...d5 · Scandinavian defence",
+            "Trade the pawn",
+            "Defend the pawn",
+            "Gambit the pawn",
+            "Bad moves"
+          ]
+        }
+      ]
+    },
+    "italienne": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. e4/1...e5/2. Nf3/2...Nc6/3. Bc4",
+          "sections": [
+            "3. Bc4 · Italian game",
+            "Attack e4",
+            "Control g5",
+            "Wild gambits"
+          ]
+        }
+      ]
+    },
+    "caro-kann": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. e4/1...c6",
+          "sections": ["1...c6 · Caro-Kann defence", "Other moves"]
+        }
+      ]
+    },
+    "gambit-roi": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. e4/1...e5/2. f4",
+          "sections": [
+            "2. f4 · King's gambit",
+            "Accept the gambit",
+            "Decline the gambit",
+            "Unorthodox moves"
+          ]
+        }
+      ]
+    },
+    "nimzo-indienne": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. d4/1...Nf6/2. c4/2...e6/3. Nc3/3...Bb4",
+          "sections": ["3...Bb4 · Nimzo-Indian Defence"]
+        }
+      ]
+    },
+    "est-indienne": {
+      "kind": "prose",
+      "relevant": [
+        {
+          "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. d4/1...Nf6/2. c4/2...g6",
+          "sections": ["2...g6 · King's Indian defence", "History"]
+        }
+      ]
+    }
+  }
+}

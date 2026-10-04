@@ -1,6 +1,15 @@
 # POC Agent d'ouvertures FFE — pile locale.
-# MongoDB est le seul service conteneurise pour l'instant : les services backend
-# et frontend arrivent avec la phase Docker Compose complet (docs/PLAN.md, jour 11).
+#
+# MongoDB persiste les sessions et les caches ; Ollama sert les embeddings
+# (qwen3-embedding:0.6b) et le LLM du coach ; Milvus standalone (etcd + objet S3
+# + milvus) est le store vectoriel (docs/DATA.md, ADR 0006).
+#
+# Note MinIO : `minio/minio` a retiré ses images Docker Hub, donc l'image
+# officielle de la compose Milvus n'est plus tirable. On utilise l'archive
+# Bitnami `bitnamilegacy/minio` (même API S3, credentials par défaut minioadmin)
+# en attendant une image S3 de remplacement. Voir docs/ARCHITECTURE.md.
+#
+# Env spécifiques (dev) dans .env : MONGODB_URI, MILVUS_URI, OLLAMA_BASE_URL.
 
 services:
   mongodb:
@@ -10,7 +19,99 @@ services:
       - "${MONGODB_PORT:-27017}:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:0.35.0
+    container_name: p13-ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.25
+    container_name: p13-milvus-etcd
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    volumes:
+      - milvus_etcd:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  minio:
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    container_name: p13-milvus-minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - milvus_minio:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  milvus:
+    image: milvusdb/milvus:v2.6.22
+    container_name: p13-milvus
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      # Must mirror the minio service: overriding MINIO_ROOT_* without these
+      # leaves Milvus using the default credentials and unable to reach MinIO.
+      MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MQ_TYPE: woodpecker
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "${MILVUS_PORT:-19530}:19530"
+      - "${MILVUS_METRICS_PORT:-9091}:9091"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 90s
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   mongo_data:
+  ollama_models:
+  milvus_etcd:
+  milvus_minio:
+  milvus_data:

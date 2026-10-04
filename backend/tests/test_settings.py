@@ -1,6 +1,7 @@
 import logging
 
 from backend.app.core.settings import (
+    Settings,
     _parse_dotenv_line,
     _without_config_secrets,
     _with_secret_env,
@@ -53,6 +54,62 @@ def test_strips_mongodb_uri_from_config(caplog) -> None:  # type: ignore[no-unty
     )
 
 
+def test_strips_milvus_uri_from_config(caplog) -> None:  # type: ignore[no-untyped-def]
+    config = {
+        "milvus": {
+            "collection": "chess_knowledge",
+            "uri": "http://from-config:19530",
+        }
+    }
+
+    with caplog.at_level(logging.WARNING, logger="backend.settings"):
+        result = _without_config_secrets(config)
+
+    assert result["milvus"] == {"collection": "chess_knowledge"}
+    assert any(
+        record.name == "backend.settings"
+        and "milvus.uri" in record.getMessage()
+        and "is ignored" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_strips_ollama_base_url_from_config(caplog) -> None:  # type: ignore[no-untyped-def]
+    config = {
+        "embeddings": {"model": "qwen3-embedding:0.6b", "base_url": "http://from-config:11434"},
+        "llm": {"model": "qwen2.5:7b-instruct", "base_url": "http://from-config:11434"},
+    }
+
+    with caplog.at_level(logging.WARNING, logger="backend.settings"):
+        result = _without_config_secrets(config)
+
+    assert result["embeddings"] == {"model": "qwen3-embedding:0.6b"}
+    assert result["llm"] == {"model": "qwen2.5:7b-instruct"}
+    assert sum(
+        1
+        for record in caplog.records
+        if "base_url" in record.getMessage() and "is ignored" in record.getMessage()
+    ) == 2
+
+
+def test_strips_typesafe_secret_and_environment_specific_base_url_from_config(caplog) -> None:  # type: ignore[no-untyped-def]
+    config = {
+        "typesafe": {
+            "enabled": True,
+            "api_key": "toml-secret",
+            "base_url": "https://gateway.example.test/typesafe",
+            "model": "jev-1.13.0",
+        }
+    }
+
+    with caplog.at_level(logging.WARNING, logger="backend.settings"):
+        result = _without_config_secrets(config)
+
+    assert result["typesafe"] == {"enabled": True, "model": "jev-1.13.0"}
+    assert any("typesafe.api_key" in record.getMessage() for record in caplog.records)
+    assert any("typesafe.base_url" in record.getMessage() for record in caplog.records)
+
+
 def test_with_secret_env_prefers_mongodb_uri_from_environment(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.delenv("MONGODB_URI", raising=False)
     monkeypatch.delenv("LICHESS_TOKEN", raising=False)
@@ -75,6 +132,69 @@ def test_with_secret_env_keeps_default_without_mongodb_uri(monkeypatch) -> None:
     result = _with_secret_env({"mongodb": {"database": "chess_agent"}})
 
     assert "uri" not in result["mongodb"]
+
+
+def test_with_secret_env_sets_milvus_uri_and_ollama_base_url(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    values = {"MILVUS_URI": "http://milvus:19530", "OLLAMA_BASE_URL": "http://ollama:11434"}
+    monkeypatch.delenv("MONGODB_URI", raising=False)
+    monkeypatch.delenv("LICHESS_TOKEN", raising=False)
+    monkeypatch.delenv("MILVUS_URI", raising=False)
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.setattr(
+        "backend.app.core.settings._read_dotenv_value",
+        lambda name: values.get(name),
+    )
+
+    result = _with_secret_env({"milvus": {"collection": "chess_knowledge"}})
+
+    assert result["milvus"]["uri"] == "http://milvus:19530"
+    assert result["milvus"]["collection"] == "chess_knowledge"
+    assert result["embeddings"]["base_url"] == "http://ollama:11434"
+    assert result["llm"]["base_url"] == "http://ollama:11434"
+
+
+def test_with_secret_env_sets_typesafe_api_key_and_base_url(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    values = {
+        "TYPESAFE_API_KEY": "ts-key",
+        "TYPESAFE_BASE_URL": "https://gateway.example.test/typesafe",
+    }
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("TYPESAFE_BASE_URL", raising=False)
+    monkeypatch.setattr(
+        "backend.app.core.settings._read_dotenv_value",
+        lambda name: values.get(name),
+    )
+
+    result = _with_secret_env({"typesafe": {"enabled": True}})
+
+    assert result["typesafe"]["enabled"] is True
+    assert result["typesafe"]["api_key"] == "ts-key"
+    assert result["typesafe"]["base_url"] == "https://gateway.example.test/typesafe"
+
+
+def test_settings_expose_rag_defaults() -> None:
+    settings = Settings()
+
+    assert settings.embeddings.dimension == 1024
+    assert settings.embeddings.model == "qwen3-embedding:0.6b"
+    assert settings.embeddings.base_url == "http://localhost:11434"
+    assert settings.milvus.collection == "chess_knowledge"
+    assert settings.milvus.metric_type == "COSINE"
+    assert settings.milvus.uri == "http://localhost:19530"
+    assert settings.rag.k == 5
+    assert settings.rag.granularity == "section"
+    assert settings.llm.model == "qwen2.5:7b-instruct"
+    assert settings.llm.base_url == "http://localhost:11434"
+    assert settings.llm.num_ctx == 4096
+    assert settings.llm.think is False
+    assert settings.llm.keep_alive == "5m"
+    assert settings.llm.seed is None
+    assert settings.typesafe.enabled is False
+    assert settings.typesafe.model == "jev-latest"
+    assert settings.typesafe.base_url == "https://api.typesafe.ai"
+    assert settings.typesafe.api_key is None
+    assert settings.typesafe.high_confidence == 0.75
+    assert settings.typesafe.medium_confidence == 0.5
 
 
 def test_keeps_config_without_lichess_token_unchanged() -> None:

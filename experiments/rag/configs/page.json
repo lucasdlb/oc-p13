@@ -1,0 +1,30 @@
+{
+  "name": "page",
+  "provider": "ollama",
+  "embeddings": {
+    "model": "qwen3-embedding:0.6b",
+    "dimension": 1024,
+    "batch_size": 16,
+    "keep_alive": "30m",
+    "timeout_seconds": 300.0
+  },
+  "milvus": {
+    "collection": "chess_knowledge_rag",
+    "metric_type": "COSINE",
+    "index_type": "HNSW",
+    "index_m": 16,
+    "index_ef_construction": 200,
+    "search_ef": 128,
+    "dimension": 1024,
+    "max_text_length": 16000
+  },
+  "rag": {
+    "k": 5,
+    "granularity": "page",
+    "min_score": 0.0,
+    "soft_eco_filter": false
+  },
+  "corpus": {
+    "wikibooks_limit": null
+  }
+}

@@ -20,6 +20,47 @@ connect_timeout_seconds = 1.5
 lichess_cache_ttl_seconds = 86400
 videos_cache_ttl_seconds = 604800
 
+[embeddings]
+model = "qwen3-embedding:0.6b"
+dimension = 1024
+batch_size = 32
+keep_alive = "5m"
+query_instruction = "Given a web search query, retrieve relevant passages that answer the query"
+timeout_seconds = 120.0
+
+[milvus]
+collection = "chess_knowledge_fdfff4354c1c_33d349ba87d3"
+metric_type = "COSINE"
+index_type = "HNSW"
+index_m = 16
+index_ef_construction = 200
+search_ef = 64
+dimension = 1024
+max_text_length = 8000
+timeout_seconds = 10.0
+
+[rag]
+k = 5
+granularity = "section"
+min_score = 0.0
+soft_eco_filter = true
+
+[llm]
+model = "qwen2.5:7b-instruct"
+temperature = 0.2
+max_tokens = 512
+num_ctx = 4096
+think = false
+keep_alive = "5m"
+timeout_seconds = 60.0
+
+[typesafe]
+enabled = false
+model = "jev-latest"
+timeout_seconds = 1.0
+high_confidence = 0.75
+medium_confidence = 0.5
+
 [recommendations]
 min_move_share = 0.001
 min_position_games = 100

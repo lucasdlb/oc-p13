@@ -1,581 +1,322 @@
-# Implementation Plan
+# RAG Next Plan
 
-> Temp working file, non-authoritative. `docs/PLAN.md` and `docs/DATA.md` remain the
-> sources of truth. Decisions are captured in `docs/adr/0005-mongodb-sessions-and-cache-policy.md`.
+> Working file, non-authoritative. The sources of truth remain `docs/AGENT_CONTEXT.md`,
+> `docs/MVP.md`, `docs/ARCHITECTURE.md`, `docs/DATA.md`, `docs/RAG-RUNBOOK.md`,
+> `docs/adr/0006-rag-milvus-and-embeddings.md`, and the local issue specs under
+> `.scratch/`.
 
-## Verification (2026-10-01)
+## Current State
 
-- Backend: `uv run pytest backend/tests` — 81 passed.
-- Frontend: `npm test -- --watch=false` — 14 passed; `npm run build` OK (pre-existing CSS budget warning in `analysis-panel.css`).
+The RAG retrieval pipeline is implemented, smoke-tested end to end, and realigned on the full
+Wikibooks corpus with hardened ingestion metadata.
 
-## Confirmed Decisions
+Validated runtime (2026-10-04):
 
-| # | Decision | Value |
-|---|---|---|
-| 1 | MongoDB role | Sessions + Lichess/Stockfish/videos caches; never opening source or vector store |
-| 2 | Session creation | Lazy: created on the first analyzed move; then every new move is appended |
-| 3 | Reinitialise | No session if nothing played (local reset only); otherwise the next analyzed move creates a new session, the old session stays replayable via `GET /api/sessions/{id}` |
-| 4 | Branch behavior | New move after going back discards the future variation (frontend and session truncation) |
-| 5 | Navigation | Auto-analyzes un-analyzed positions; restores cached analyses when available |
-| 6 | Level storage | On each analysis (with rating range), not on session |
-| 7 | TTLs | Lichess 24 h, videos 7 d, Stockfish none (version-keyed), sessions none |
-| 8 | Cache keys | Lichess: variant + moves + rating buckets; Stockfish: FEN + depth + engine version; videos: query |
-| 9 | Degradation | Mongo outage never blocks analysis (direct calls, no cache writes); Lichess failure -> seed fallback |
-| 10 | Only successful responses are cached | Lichess seed fallbacks and Stockfish `unavailable` results are never cached |
-| 11 | Sequencing | RAG/Milvus after cache phases (deviation from `docs/PLAN.md`, captured in ADR 0005) |
-| 12 | TODO.md | Temp working file, non-authoritative |
+- Docker Compose services: MongoDB, Ollama, Milvus. Ollama runs on GPU through
+  `docker-compose.gpu.yml`; `docker compose exec -T ollama ollama ps` reports `100% GPU`.
+- Embeddings: Ollama `qwen3-embedding:0.6b`, digest `ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d`.
+- Snapshot rebuilt with the hardened classifier and direct-child alias mapper:
+  `.scratch/rag/corpus/wikibooks-snapshot` → `wb-2afb6c3916ecbab8` (hash `2afb6c39…`),
+  2619 pages → 1766 accepted, 2657 chunks.
+- Full-corpus collection: `chess_knowledge_fdfff4354c1c_33d349ba87d3_a608853c1518`
+  (Docker Milvus, 2657 chunks, snapshot provenance recorded, validated read-only with `--no-ingest`).
+- Demo collection: `chess_knowledge_fdfff4354c1c_33d349ba87d3` (Docker, 50 chunks from the 13
+  curated pages, re-ingested with the hardened rules).
+- `config.toml` still points `[milvus].collection` at the demo collection. Moving production to the
+  full corpus is a separate validated phase (ADR + user validation).
+- `POST /api/analyze-position` returns real Wikibooks `rag_context` for Ruy Lopez with source URL,
+  license, `relation_to_position = current`, and no `rag_unavailable` / `milvus_unavailable` /
+  `ollama_unavailable` fallback.
 
-## Recommended Architecture
+Hardened section intents on the full corpus (was → now): `misc` 323 → 188, new `plan` 72 and
+`variation` 63, `intro` 1766, `candidate_move` 355, `history` 200, `trap` 4, `mistake` 9.
 
-Use MongoDB for:
+Latest verification:
 
-1. Session persistence and replay.
-2. Lichess response caching.
-3. Stockfish response caching.
-4. Later, YouTube caching.
+```bash
+docker compose config --quiet
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d ollama milvus mongodb
+uv run pytest backend/tests
+uv run python -m experiments.rag.fetch_corpus
+uv run python -m backend.app.ingestion.cli --ingest-mode incremental
+uv run python -m backend.app.ingestion.cli --no-ingest
+uv run python -m experiments.rag.run --config experiments/rag/configs/section.json --no-ingest
+```
 
-Keep responsibilities separate:
+Latest backend result:
 
 ```text
-Lichess       -> opening names, theory, statistics
-Stockfish     -> out-of-theory evaluation
-MongoDB       -> sessions and API caches
-Milvus        -> pedagogical vector search
-opening_book  -> offline fallback only
+380 passed, 1 warning
 ```
 
-## 1. Frontend Navigation Model
-
-The current `GameStateService` only stores one mutable `Chess` instance. It must become a timeline-based state model.
+Broad retrieval sanity baseline (`experiments/rag/run.py`, bare vector search with no retrieval
+plan — corpus/embedding signal only, not a coach gate):
 
 ```text
-initial position
-  -> move 1
-  -> move 2
-  -> move 3
-              ^
-           cursor
+hit_rate      1.000
+precision@1   0.615
+recall@k      0.536
+ndcg@k        0.552
 ```
 
-Add to `GameStateService`:
+Weak broad cases: `sicilienne-najdorf`, `gambit-dame-refuse`, `italienne`, `gambit-roi`. In each, the
+rank-1 hit is a `History` section or a same-title section from another page — both already suppressed
+by the real retrieval plan. Do not tune embeddings against this harness.
 
-- `currentIndex`
-- `moveHistory`
-- `snapshots`
-- `goBack()`
-- `goForward()`
-- `canGoBack`
-- `canGoForward`
-- `reset()`
-- `applyMove()`
-
-Each snapshot should contain:
-
-```ts
-interface GameSnapshot {
-  fen: string;
-  pgn: string;
-  moves: string[];
-  legalDests: Dests;
-  turn: 'white' | 'black';
-  currentIndex: number;
-}
-```
-
-For forward navigation, reconstruct the `Chess` position from the initial board and replay moves up to the requested index. This is safer than trying to maintain multiple mutable `Chess` instances.
-
-Recommended behavior when playing a new move after going backward:
+Production-shaped baseline (Eval V2, full corpus, run `20261004T114631761494Z`, compared with the
+pre-hardening run `20261003T221022869092Z`):
 
 ```text
-1. e4 e5 Nf3
-         ^
-       back
-
-Play d6
-
-1. e4 e5 Nf3 d6
+coach_usable_context_rate   0.00 → 0.20
+deep_descendant_pollution   0.27 → 0.00
+history_pollution           0.06 → 0.00
+misc_pollution              0.10 → 0.00
+false_current_line          0.39 → 0.317
+false_context_rate          0.84 → 0.761
+current_context_hit_rate    0.60 → 0.50
+precision@1 (secondary)     0.31 → 0.44
+ndcg@k (secondary)          0.50 → 0.53
 ```
 
-The old future branch is discarded. This matches normal chess analysis UI behavior.
+Interpretation: the metadata round removed history, misc, and deep-descendant pollution entirely, but
+the coach gate is still shut. The remaining defects are intent routing, eval-metric fidelity, and a
+small sibling residue — see Next Work.
 
-## 2. Frontend Controls
+Eval V2 is the gate for coach safety. `experiments/rag/run.py` stays a sanity harness.
 
-Add left/right navigation controls near the move history:
-
-- Previous position button.
-- Next position button.
-- Buttons disabled at the beginning/end of the timeline.
-- Optional position indicator: `3 / 5`.
-
-Keyboard behavior:
-
-- `ArrowLeft`: go to previous position.
-- `ArrowRight`: go to next position.
-- Ignore keyboard shortcuts while focus is inside `input`, `textarea`, `select`, or `button`.
-- Prevent browser horizontal scrolling when navigation is handled.
-
-The board must be updated through the existing `setPosition()` method whenever the cursor changes.
-
-Files affected:
-
-- `frontend/src/app/services/game-state.ts`
-- `frontend/src/app/services/game-state.spec.ts`
-- `frontend/src/app/move-history/move-history.ts`
-- `frontend/src/app/move-history/move-history.html`
-- `frontend/src/app/app.ts`
-- `frontend/src/app/app.html`
-
-## 3. Analysis Behavior During Navigation
-
-Analysis belongs to a position, not only to the latest move.
-
-Use a frontend analysis map keyed by a stable position key:
+B2 intent-routing round (run `20261004T142855670145Z`, same metric semantics as
+`20261004T114631761494Z`):
 
 ```text
-position key = normalized FEN + level + rating range
+intent agreement            7/20 → 20/20
+coach_usable_context_rate   0.20 → 0.65
+false_current_line          0.317 → 0.053
+false_context_rate          0.761 → 0.455
+current_context_hit_rate    0.50 → 0.60
+child_context_hit_rate      0.80 → 1.00
+deep_descendant_pollution   0.00 → 0.00
+history_pollution           0.00 → 0.00
+misc_pollution              0.00 → 0.00
 ```
 
-Behavior:
+Interpretation: deterministic intent routing is now aligned with the frozen Eval V2 questions without
+JEV. The next gated step remains metric fidelity (`parent_prose` and `current_node_other_prose`) and
+requires explicit approval before touching `experiments/rag/eval_v2/metrics.py`.
+
+B2 metric-fidelity round (run `20261004T143940995805Z`, **new metric semantics**: parent-node prose is
+reported as `parent_prose`, same-node non-expected prose is reported as `current_node_other_prose`, and
+neither counts as `false_current_line`):
 
 ```text
-User plays a new move
-  -> request analysis
-  -> display result
-  -> save result in current session
-
-User goes backward
-  -> if analysis already exists locally, display it immediately
-  -> otherwise request analysis
-
-User goes forward
-  -> restore the existing analysis if available
-  -> otherwise request analysis
+coach_usable_context_rate   0.65 → 0.75
+false_current_line          0.053 → 0.017
+false_context_rate          0.455 → 0.455
+current_context_hit_rate    0.60 → 0.60
+child_context_hit_rate      1.00 → 1.00
+deep_descendant_pollution   0.00 → 0.00
+history_pollution           0.00 → 0.00
+misc_pollution              0.00 → 0.00
 ```
 
-The backend cache remains necessary because the same FEN can be analyzed in a different browser session and the frontend cache disappears on refresh.
+Classification counts on the metric-fidelity run: `parent_prose = 3`,
+`current_node_other_prose = 34`, `false_current_line = 1`, `unrelated = 2`. Do not compare this run's
+`false_current_line` or `coach_usable_context_rate` to older runs without stating the metric change.
 
-## 4. Session Lifecycle
-
-### Application start
-
-Create a session:
-
-```http
-POST /api/sessions
-```
-
-Response:
-
-```json
-{
-  "id": "session-id",
-  "started_at": "...",
-  "status": "active"
-}
-```
-
-The frontend stores only the session ID.
-
-### New move
-
-Persist the move:
-
-```http
-POST /api/sessions/{session_id}/moves
-```
-
-Payload:
-
-```json
-{
-  "ply": 1,
-  "uci": "e2e4",
-  "san": "e4",
-  "fen": "...",
-  "pgn": "1. e4"
-}
-```
-
-Only new moves should be persisted. Going backward or forward is navigation, not a new move.
-
-### Analysis
-
-Send the session ID with the analysis request:
-
-```json
-{
-  "session_id": "session-id",
-  "fen": "...",
-  "pgn": "1. e4",
-  "moves": ["e2e4"],
-  "level": "debutant",
-  "rating_min": 1000,
-  "rating_max": 1400
-}
-```
-
-After analysis, store the result in the session:
-
-```http
-POST /api/sessions/{session_id}/analyses
-```
-
-The analysis should be associated with the position key or normalized FEN.
-
-### Reinitialise button
-
-`Reinitialise` must create a new session, not merely clear the frontend:
+B2 residual-prose round (run `20261004T144514370218Z`, same metric semantics as
+`20261004T143940995805Z`):
 
 ```text
-Click Reinitialise
-  -> POST /api/sessions
-  -> receive new session ID
-  -> reset frontend timeline
-  -> clear current analysis
-  -> show initial board
+coach_usable_context_rate   0.75 → 0.80
+false_current_line          0.017 → 0.000
+false_context_rate          0.455 → 0.447
+current_context_hit_rate    0.60 → 0.60
+child_context_hit_rate      1.00 → 1.00
+deep_descendant_pollution   0.00 → 0.00
+history_pollution           0.00 → 0.00
+misc_pollution              0.00 → 0.00
 ```
 
-The old session remains available for replay.
+Classification counts on the residual-prose run: `parent_prose = 3`, `current_node_other_prose = 35`,
+`false_current_line = 0`, `unrelated = 2`. The remaining `unrelated` documents are not sibling-line
+prose: one root-page `Other moves` section for the general-principles case, and one same-node Sicilian
+`Bad moves` section.
 
-If session creation fails, do not silently overwrite the current session. Show an error and keep the current session active.
+## Active Compromise
 
-## 5. MongoDB Schema
+The live API currently needs a safe ECO fallback because raw-corpus ingestion can produce chunks with
+`opening_node_id = None`.
 
-### `sessions`
+Current safeguard:
 
-```json
-{
-  "_id": "...",
-  "started_at": "...",
-  "ended_at": null,
-  "status": "active",
-  "level": "debutant",
-  "initial_fen": "starting-position",
-  "moves": [
-    {
-      "ply": 1,
-      "uci": "e2e4",
-      "san": "e4",
-      "fen": "...",
-      "pgn": "1. e4",
-      "created_at": "..."
-    }
-  ],
-  "analyses": [
-    {
-      "position_key": "...",
-      "fen": "...",
-      "response": {},
-      "created_at": "..."
-    }
-  ]
-}
+- Node-filtered retrieval remains the primary path.
+- If no node-mapped chunks are found, retrieval falls back to ECO-filtered prose.
+- For raw ECO fallback, only section `0` is accepted as current prose.
+- Unmapped History, Berlin, and other subsections are suppressed by default.
+
+This keeps the demo useful, but it is not the final target. The target is true tree-constrained
+retrieval using `opening_node_id` metadata.
+
+## Next Work
+
+Completed in the metadata-hardening round (`.scratch/rag-metadata-hardening/`, all issues resolved):
+rule-vs-JEV classification bench, `OpeningTree` mapping in the raw ingestion path, deterministic
+section-classification rules, clean re-ingest, eval/API smoke rerun, and the optional `question`
+field on `AnalyzePositionRequest`.
+
+### 1. Fix Intent Routing Before Anything Else — Completed In B2
+
+Goal: make the retrieval plan match the question's intent. This is the largest measured defect.
+
+Evidence from Eval V2 run `20261004T114631761494Z`: the rule router disagrees with the dataset
+intent on 14 of 20 cases, mostly through the `conservative_default` → `explain_current_position`
+path. Consequences: no history bucket for history questions (3 `current_context_hit` regressions), no
+children bucket for next-move questions (lost `child_context_hit`), no candidate bucket for
+specific-candidate questions.
+
+Tasks:
+
+- Inspect the frozen questions for the mismatching cases and classify each as router gap vs ambiguous
+  phrasing.
+- Tighten deterministic rules for `ask_history`, `ask_trap`, `ask_next_moves`, and
+  `ask_specific_candidate`; keep `conservative_default` for genuinely unclear input.
+- Keep JEV as the optional primary classifier behind `IntentRouter` with rule fallback; JEV must not
+  persist metadata.
+- Add router tests over the frozen Eval V2 question set (agreement rate, not per-case hardcoding).
+
+Acceptance:
+
+- Eval V2 intent agreement improves from 6/20 without regressing the 6 already correct.
+- `current_context_hit_rate` recovers to at least 0.60.
+- `child_context_hit_rate` stays at or above 0.80.
+
+### 2. Make The Eval Metrics Model `relation_to_position` — Completed In B2
+
+Goal: stop scoring the plan's own parent context as fabrication.
+
+Evidence: 11 of the 17 `false_current_line` docs are the parent bucket the plan retrieved on purpose
+(`relation_to_position = parent`). A further 34 docs are labeled `unrelated` because they sit on the
+correct node but are not the exact section frozen in `expected_context.current_prose`.
+
+Tasks:
+
+- Add a `parent_prose` label for chunks whose node is the case's parent node; exclude it from
+  `false_current_line`.
+- Report same-node non-expected prose as its own label (`current_node_other_prose`) so
+  `false_context_rate` distinguishes "wrong line" from "right line, other section".
+- Re-baseline Eval V2 after the metric change and record both numbers; do not compare across the
+  metric change without saying so.
+
+Acceptance:
+
+- Label semantics are documented in `experiments/rag/eval_v2/metrics.py` and covered by tests.
+- A parent-bucket document is never counted as a false current line.
+- The report still counts true sibling/unrelated prose as pollution.
+
+### 3. Remove Residual Sibling Pollution — Completed In B2
+
+Goal: eliminate the remaining prose from sibling lines.
+
+Evidence: 6 retrieved docs carry an `opening_node_id` outside the current node, its children, and its
+parent, with `intro`/`plan`/`candidate_move` intent.
+
+Tasks:
+
+- Trace those docs to their bucket (current vs children vs parent) and fix node scope or exclusion.
+- Re-run Eval V2 and confirm the residue reaches zero without shrinking `current_context_hit_rate`.
+
+Acceptance:
+
+- No sibling-prose document is returned for `explain_current_position` plans.
+- `deep_descendant_pollution` and `history_pollution` stay at 0.00.
+
+### 4. Build The Conservative CoachService
+
+Goal: generate coach explanations from structured, source-constrained context.
+
+Do not start this before items 1-3 are validated, and record the gate decision first: Eval V2's
+`coach_usable_context_rate` is all-or-nothing (any pollution disqualifies a case). Decide with fresh
+numbers whether a secondary safe-subset metric (only `false_current_line`, `deep_descendant`,
+child-as-current disqualify) is also needed.
+
+First implementation must be conservative:
+
+- Consume the `CoachContext` contract, partitioned into current and child buckets at assembly time.
+- Current passages render as declarative prose; child passages only inside a conditional frame
+  (`si les Noirs jouent ...Nf6`).
+- Deterministic post-check: no child passage inside a current claim, no unsourced claim (source,
+  license, `relation_to_position` required per passage).
+- Keep the rule-based intent fallback and a deterministic output fallback.
+- Treat JEV as an optional intent classifier, never as corpus authority; never persist JEV output.
+- Gate with `CoachContext` contract tests plus a small golden-response set.
+
+## Standard Validation Sequence
+
+Use this sequence before calling the next RAG iteration done:
+
+```bash
+docker compose config --quiet
+docker compose up -d mongodb ollama milvus
+docker compose exec -T ollama ollama pull qwen3-embedding:0.6b
+uv run pytest backend/tests
+uv run python -m experiments.rag.fetch_corpus
+uv run python -m backend.app.ingestion.cli --ingest-mode incremental
+uv run python -m backend.app.ingestion.cli --no-ingest
+uv run python -m experiments.rag.run --config experiments/rag/configs/section.json --no-ingest
 ```
 
-For the MVP, embedding moves and analyses inside the session is acceptable.
+Full-corpus Eval V2 sequence (rebuild only when the cleaner, classifier, mapper, or opening tree
+changed; each rebuild produces a new snapshot hash and therefore a new collection name):
 
-Indexes:
-
-```text
-sessions._id
-sessions.started_at
-sessions.status
+```bash
+uv run python -m experiments.rag.clean_report
+uv run python -m experiments.rag.build_snapshot --force
+uv run python -m backend.app.ingestion.cli \
+  --snapshot-dir .scratch/rag/corpus/wikibooks-snapshot \
+  --ingest-mode full
+uv run python -m backend.app.ingestion.cli \
+  --snapshot-dir .scratch/rag/corpus/wikibooks-snapshot \
+  --no-ingest \
+  --collection COLLECTION_NAME_FROM_THE_INGEST_OUTPUT
+uv run python -m experiments.rag.eval_v2.retrieve --collection COLLECTION_NAME_FROM_THE_INGEST_OUTPUT
 ```
 
-### `lichess_cache`
+The Eval V2 runner refuses to score a run where any case hit `rag_store_unavailable` or where every
+case retrieved zero documents.
 
-```json
-{
-  "key": "normalized-moves|ratings",
-  "payload": {},
-  "source": "lichess-opening-explorer",
-  "cached_at": "...",
-  "expires_at": "..."
-}
+API smoke payload:
+
+```bash
+uv run uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
-TTL: approximately 24 hours.
-
-The cache key must include every parameter affecting the response:
-
-- variant;
-- move sequence;
-- rating buckets;
-- speeds, if used.
-
-### `stockfish_cache`
-
-```json
-{
-  "key": "normalized-fen|depth|engine-version",
-  "payload": {},
-  "cached_at": "..."
-}
+```bash
+curl -sS http://127.0.0.1:8000/api/analyze-position \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "fen":"r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 2 3",
+    "pgn":"1. e4 e5 2. Nf3 Nc6 3. Bb5",
+    "moves":["e2e4","e7e5","g1f3","b8c6","f1b5"],
+    "level":"intermediaire"
+  }'
 ```
 
-The key must include:
+Expected API smoke result:
 
-- normalized FEN;
-- depth or time limit;
-- engine version;
-- relevant engine options.
+- `opening.name = Ruy Lopez`.
+- `rag_context[0].source = wikibooks-chess-opening-theory`.
+- `rag_context[0].license_or_terms` is present.
+- `rag_context[0].relation_to_position = current`.
+- `fallbacks_used` does not include `rag_unavailable`, `milvus_unavailable`, or `ollama_unavailable`.
 
-Stockfish results can usually be retained longer than Lichess results. A change in Stockfish version must not reuse old results accidentally.
+## Do Not Do Yet
 
-### `videos_cache`
-
-```json
-{
-  "key": "normalized-query",
-  "payload": [],
-  "cached_at": "...",
-  "expires_at": "..."
-}
-```
-
-TTL: approximately 7 days.
-
-## 6. Cache Lookup Flow
-
-### Lichess
-
-```text
-Analyze position
-  -> build Lichess cache key
-  -> MongoDB find_one(key)
-       |
-       +-- hit: return cached payload
-       |
-       +-- miss:
-              call Lichess
-              validate response
-              save response
-              return response
-```
-
-If MongoDB is unavailable:
-
-```text
-Mongo read fails
-  -> call Lichess directly
-  -> do not save cache
-  -> continue analysis
-```
-
-If Lichess fails, use the documented seed fallback and add `lichess_unavailable` to `fallbacks_used`.
-
-### Stockfish
-
-```text
-Need Stockfish
-  -> build FEN/depth/engine-version key
-  -> MongoDB find_one(key)
-       |
-       +-- hit: return cached evaluation
-       |
-       +-- miss:
-              run Stockfish
-              save successful result
-              return result
-```
-
-Do not cache an unavailable result as a successful evaluation. Temporary failure responses should either not be cached or have a very short TTL.
-
-If MongoDB is unavailable, Stockfish still runs directly.
-
-## 7. Backend Design
-
-Add validated MongoDB configuration:
-
-```toml
-[mongodb]
-uri = "mongodb://mongodb:27017"
-database = "chess_agent"
-connect_timeout_seconds = 1.5
-cache_lichess_ttl_seconds = 86400
-cache_videos_ttl_seconds = 604800
-```
-
-The URI is environment-specific and should normally be supplied through `.env` or Docker Compose.
-
-Add service seams:
-
-```text
-backend/app/services/mongo.py
-backend/app/services/session_store.py
-backend/app/services/cache_store.py
-```
-
-Recommended interfaces:
-
-```text
-SessionStore
-  create_session()
-  append_move()
-  save_analysis()
-  get_session()
-  end_session()
-
-CacheStore
-  get_lichess()
-  set_lichess()
-  get_stockfish()
-  set_stockfish()
-  get_videos()
-  set_videos()
-```
-
-Initialize MongoDB once during application startup and close the client during shutdown. Do not instantiate a new client for every request.
-
-## 8. API Endpoints
-
-Add:
-
-```http
-POST /api/sessions
-GET /api/sessions/{id}
-POST /api/sessions/{id}/moves
-POST /api/sessions/{id}/analyses
-POST /api/sessions/{id}/end
-```
-
-Extend:
-
-```http
-POST /api/analyze-position
-```
-
-with:
-
-```json
-{
-  "session_id": "..."
-}
-```
-
-The existing response contract remains unchanged. Optional cache metadata can be exposed for the technical demonstration:
-
-```json
-{
-  "cache": {
-    "lichess": "hit",
-    "stockfish": "miss"
-  }
-}
-```
-
-## 9. Docker Compose
-
-Add MongoDB:
-
-```yaml
-mongodb:
-  image: mongo:8
-  volumes:
-    - mongo_data:/data/db
-  restart: unless-stopped
-```
-
-Configure the backend with:
-
-```yaml
-environment:
-  MONGODB_URI: mongodb://mongodb:27017
-  MONGODB_DATABASE: chess_agent
-depends_on:
-  - mongodb
-```
-
-`depends_on` only controls startup order. The backend must still tolerate MongoDB not being ready and retry or degrade gracefully.
-
-## 10. Implementation Phases
-
-### Phase 1: Frontend timeline — DONE
-
-- [x] Refactor `GameStateService` to support a cursor (`currentIndex`, `line`, `goBack`, `goForward`, discard branch).
-- [x] Add previous/next buttons with disabled states and a `n / total` indicator.
-- [x] Add keyboard arrows (`ArrowLeft`/`ArrowRight`), ignored inside form controls, default prevented when handled.
-- [x] Synchronize board, PGN, FEN, legal moves, and analysis.
-- [x] Auto-analyze un-analyzed positions on navigation; restore cached analyses per position key; position 0 clears the analysis (the initial position is not analyzable under the current contract).
-- [x] Unit tests for navigation, boundaries, and branching.
-
-### Phase 2: Session API — DONE
-
-- [x] MongoDB Compose service (`docker-compose.yml`, `mongo:8`).
-- [x] `MongoSettings` (Pydantic, `[mongodb]` in `config.toml`, URI from `MONGODB_URI` env/.env only).
-- [x] `pymongo` dependency; Mongo client lifecycle (lazy singleton, closed on FastAPI shutdown).
-- [x] `sessions` persistence (`SessionStore`, embedded moves and analyses).
-- [x] Session endpoints: `POST /api/sessions`, `GET /api/sessions/{id}`, `POST .../moves`, `POST .../analyses`, `POST .../end`.
-- [x] Lazy creation: `POST /api/analyze-position` with optional `session_id` creates and returns the session on the first analyzed move.
-- [x] Backend tests with a fake in-memory pymongo database.
-
-### Phase 3: Move and analysis persistence — DONE
-
-- [x] Persist moves only when new (navigation never mutates the session line; a branch truncates the discarded variation).
-- [x] Persist analysis by position key (fen + level + rating buckets), level stored per analysis.
-- [x] Session replay via `GET /api/sessions/{id}` tested.
-
-### Phase 4: Lichess cache — DONE
-
-- [x] Cache keys: variant + normalized UCI line + rating buckets; masters shares the collection with a distinct key prefix.
-- [x] TTL index 24 h on `cached_at`; unique index on `key`.
-- [x] Read cache before calling Lichess; store only successful responses; seed fallback preserved.
-- [x] Cache hit/miss tests; fallback responses never cached.
-
-### Phase 5: Stockfish cache — DONE
-
-- [x] Cache key: EPD + depth + engine version (`engine_version` probes the binary once per process).
-- [x] Only `status: ok` evaluations cached; `unavailable` never cached.
-- [x] Tests for hit, miss, and Mongo outage.
-- Note: `POST /api/stockfish/evaluate` stays uncached on purpose (raw engine probe); the analyze flow caches.
-
-### Phase 6: Video cache — DEFERRED
-
-- The YouTube API is not integrated yet: the current response is a deterministic local search-fallback link with no external call to cache.
-- `CacheStore.get_videos`/`set_videos` are ready for the YouTube integration phase; TTL 7 d per ADR 0005.
-
-### Phase 7: RAG/Milvus — PENDING
-
-- Requires the framed research first (embedding model and pedagogical corpus are open zones per `docs/AGENT_CONTEXT.md`), then Milvus ingestion and retrieval in the analyze flow.
-- Store only the resulting analysis in the session; never use MongoDB as the vector source.
-
-## 11. Required Tests
-
-### Frontend
-
-- Previous button moves one position backward.
-- Next button moves one position forward.
-- Buttons disable at timeline boundaries.
-- Left/right keyboard arrows work.
-- Keyboard shortcuts do not trigger inside form controls.
-- New move after going backward truncates the future branch.
-- Reinitialise creates a clean new local session state.
-- Existing analysis is restored when navigating.
-
-### Backend
-
-- Session creation.
-- Move append.
-- Analysis persistence.
-- Session retrieval.
-- Session ending.
-- Lichess cache hit avoids the HTTP call.
-- Lichess cache miss calls HTTP and stores the response.
-- Lichess cache expiry triggers a new request.
-- Stockfish cache hit avoids engine execution.
-- Stockfish cache miss executes and stores the result.
-- MongoDB outage does not prevent direct Lichess/Stockfish execution.
-- Invalid cache payload is ignored safely.
-
-## Recommended Order
-
-```text
-Frontend navigation
-  -> MongoDB sessions
-  -> Lichess cache
-  -> Stockfish cache
-  -> YouTube cache
-  -> RAG/Milvus
-```
-
-The key MVP behavior is: when the user goes backward and then plays a different move, discard the old forward variation.
+- Do not build the final generative coach before intent routing and Eval V2 metrics are fixed.
+- Do not point `config.toml` at the full-corpus collection before that switch has its own validated
+  round with user validation.
+- Do not remove a validated Milvus collection before a replacement passes smoke/eval.
+- Do not make child prose current-position prose.
+- Do not vectorize `lichess-org/chess-openings` TSV rows.
+- Do not add LangGraph wiring before the imperative services are stable.
+- Do not persist JEV-generated metadata into Milvus unless a later explicit decision makes the
+  provider, model, prompt/schema, confidence gates, and fallback behavior part of the corpus manifest.
+- Do not tune embeddings against `experiments/rag/run.py`; it does not run the retrieval plan.

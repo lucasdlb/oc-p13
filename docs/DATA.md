@@ -2,6 +2,8 @@
 
 Ce document est la source de verite pour les donnees du POC : sources externes, roles de MongoDB et Milvus, caches, matching d'ouvertures et validation des licences.
 
+Le detail champ par champ des APIs externes (inventaire complet Lichess Opening Explorer, Lichess Cloud Evaluation et Stockfish UCI, ce que le backend recupere, ce qui est ignore, et les opportunites associees) vit dans `docs/DATA-SCHEMAS.md`.
+
 ## Principe de separation
 
 MongoDB stocke les donnees structurees et les caches operationnels. Milvus stocke le texte pedagogique vectorise pour la recherche semantique. Le coach IA ne doit pas utiliser MongoDB comme corpus long principal et ne doit pas utiliser Milvus comme base de verite structuree.
@@ -51,6 +53,8 @@ Le matching local doit chercher dans cet ordre :
 4. Absence de match explicite, ce qui peut declencher Stockfish.
 
 Quand Lichess Opening Explorer est disponible et renvoie une ouverture (`eco`, `name`), celle-ci est prioritaire sur le matching local pour l'ouverture affichee ; le seed local devient alors un fallback offline. Les coups populaires Lichess et leurs statistiques associees (`games`, `white`, `draws`, `black`, `average_rating`) enrichissent egalement `recommended_moves` avec la source `lichess-opening-explorer`.
+
+`lichess-org/chess-openings` doit aussi etre exploite comme **arbre structurel d'ouvertures**, separe du corpus Milvus. Pour une position connue, le backend peut construire une fenetre locale autour du noeud courant : parent immediat, noeud courant, enfants directs, et petits-enfants uniquement pour du ranking interne. Les descendants plus profonds ne doivent pas etre donnes au coach par defaut. Les enfants directs representent des suites possibles depuis la position courante ; ils ne doivent jamais etre presentes comme deja joues tant que leur coup d'entree n'est pas dans la ligne.
 
 Les recommandations pratiques utilisent une politique de confiance configurable dans `config.toml` :
 
@@ -116,21 +120,31 @@ source
 url
 license_or_terms
 opening_name
+eco_code
 pgn
 fen_or_epd
 chunk_title
+page_id
+section_index
+part_index
 created_at
 ```
 
+`eco_code` est la cle de jointure entre les sources (Lichess, Wikibooks) et sert au filtrage metadata a la requete. `page_id = <source>::<page_title>` identifie la page source ; avec `section_index` et `part_index` il permet de reassembler la page a partir des sections retrouvees. Le modele d'embeddings, la dimension et la metrique sont fixes par la collection : les decisions sont capturees dans `docs/adr/0006-rag-milvus-and-embeddings.md`.
+
+Etat POC (phase R, ADR 0006) : la collection est servie par `MilvusStore` (`backend/app/services/milvus.py`), version de schema 3, dimension 1024, metrique COSINE, index HNSW, `id = SHA256(source + text)` (upsert idempotent), index scalaires sur `source`, `eco_code`, `opening_name`, `page_id`. Chaque collection porte un **manifeste** de compatibilite de stockage (schema, dimension, metrique, index physique, signature d'embeddings) separe des parametres de retrieval : reutiliser une collection incompatible echoue et exige une nouvelle collection. Les collections schema 2 restent des sources de reutilisation explicites en lecture seule lorsqu'elles sont vectoriellement compatibles ; elles ne sont pas des cibles validees. Les limites `VARCHAR` sont validees en octets UTF-8. Milvus Lite (fichier local) pour le dev, les tests et le harness ; Milvus standalone dans `docker-compose.yml` pour la demo. Granularite de chunk par defaut : `section` (mesure refaite en prose seule, ADR 0006).
+
+Le retrieval prose doit etre **relationnel par rapport au noeud d'ouverture courant**, pas un top-k plat sur tout l'arbre. Politique cible : recuperer d'abord la prose du noeud courant ; inclure de la prose des enfants directs seulement comme contexte conditionnel de suites possibles, avec budget separe, penalite de ranking et libelle explicite (`relation_to_position = child`, `entry_move`). Exemple : apres `1. e4 e5 2. Nf3 Nc6 3. Bb5`, la prose Ruy Lopez est contexte principal ; les chunks Berlin ou Morphy peuvent expliquer `...Nf6` ou `...a6` comme suites candidates, mais le coach doit dire "si les Noirs jouent ...Nf6" et non "la position est une Berlin". Les sections `history` ou `misc` doivent etre baissees ou exclues par defaut sauf question explicite.
+
 Milvus peut contenir :
 
-- chunks Wikibooks ou autre source pedagogique validee ;
+- chunks de prose pedagogique validee (Wikibooks pour l'instant) ;
 - descriptions courtes generees seulement si leur origine est documentee ;
 - passages utiles pour expliquer plans, idees et pieges d'une ouverture.
 
 Milvus ne doit pas contenir :
 
-- la source canonique du matching ;
+- la source canonique du matching (donc pas les lignes `chess-openings`) ;
 - les caches Lichess ou YouTube ;
 - des reponses coach considerees comme verite.
 
@@ -141,9 +155,10 @@ Chaque source utilisee doit etre documentee dans `source_registry` ou dans une n
 | Source | Role | Statut initial | Notes |
 | --- | --- | --- | --- |
 | `demo-opening-seed` | Seed local minimal pour les scenarios MVP | Valide pour POC local | Donnees limitees codees dans le depot avant ingestion MongoDB |
-| `lichess-org/chess-openings` | Matching local et seed MongoDB | A valider | Licence annoncee CC0, a confirmer au moment de l'ingestion |
+| `lichess-org/chess-openings` | Matching local, seed MongoDB, arbre d'ouvertures et join/filtre `eco_code` (structure) | Valide | CC0-1.0 ; cinq TSV `a`-`e` (`eco`/`name`/`pgn`), noms en anglais. **Non ingestee dans Milvus** (ADR 0006 revise) : c'est une donnee structuree, pas de la prose. |
 | Lichess Opening Explorer | Stats live, coups populaires et identification d'ouverture prioritaire | A valider | OpenAPI indique OAuth2 sur `explorer.lichess.org` ; utiliser `LICHESS_TOKEN` et fallback seed |
-| Wikibooks Chess Opening Theory | Corpus pedagogique RAG | A valider | Verifier licence et structure d'extraction |
+| Lichess Cloud Evaluation | Evaluation profonde pre-calculee (voie rapide / fallback Stockfish local) | Reporte v2 | Candidat non implemente ; `GET lichess.org/api/cloud-eval` sans auth, environ 320 M positions, score du point de vue des Blancs ; base d'evaluations CC0. Voir `docs/DATA-SCHEMAS.md` et ADR 0006. |
+| Wikibooks Chess Opening Theory | Corpus pedagogique RAG (prose) | A verifier | Licence CC BY-SA (attribution + partage a l'identique), contenu en anglais. 13 pages curees ingerees en phase R via l'API MediaWiki. `WikibooksAdapter` conserve la prose structuree et exclut templates, tables de theorie, references et navigation ; une page sale ou vide est rejetee. Attribution visible requise avant toute distribution ; voir ADR 0006. |
 | Wikichess / FICGS | Source optionnelle | A verifier | Mentionnee par le brief, mais HTML et conditions a challenger |
 | YouTube Data API | Videos explicatives | A valider | Prevoir fallback lien de recherche |
 

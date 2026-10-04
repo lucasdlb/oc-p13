@@ -39,6 +39,61 @@ class MongoSettings(BaseModel):
     videos_cache_ttl_seconds: int = Field(default=604800, ge=1)
 
 
+class EmbeddingsSettings(BaseModel):
+    base_url: str = Field(default="http://localhost:11434", min_length=1)
+    model: str = Field(default="qwen3-embedding:0.6b", min_length=1)
+    dimension: int = Field(default=1024, ge=1, le=4096)
+    batch_size: int = Field(default=32, gt=0)
+    keep_alive: str = Field(default="5m", min_length=1)
+    query_instruction: str = Field(
+        default="Given a web search query, retrieve relevant passages that answer the query",
+        min_length=1,
+    )
+    timeout_seconds: float = Field(default=120.0, gt=0)
+
+
+class MilvusSettings(BaseModel):
+    uri: str = Field(default="http://localhost:19530", min_length=1)
+    collection: str = Field(default="chess_knowledge", min_length=1)
+    metric_type: Literal["COSINE", "L2", "IP"] = "COSINE"
+    index_type: str = Field(default="HNSW", min_length=1)
+    index_m: int = Field(default=16, ge=1)
+    index_ef_construction: int = Field(default=200, ge=1)
+    search_ef: int = Field(default=64, ge=1)
+    dimension: int = Field(default=1024, ge=1, le=4096)
+    max_text_length: int = Field(default=8000, ge=1)
+    timeout_seconds: float = Field(default=10.0, gt=0)
+
+
+class RagSettings(BaseModel):
+    k: int = Field(default=5, gt=0)
+    granularity: Literal["page", "section"] = "section"
+    min_score: float = Field(default=0.0, ge=-1.0, le=1.0)
+    soft_eco_filter: bool = True
+
+
+class LLMSettings(BaseModel):
+    base_url: str = Field(default="http://localhost:11434", min_length=1)
+    model: str = Field(default="qwen2.5:7b-instruct", min_length=1)
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=512, gt=0)
+    num_ctx: int = Field(default=4096, gt=0)
+    think: bool = False
+    keep_alive: str = Field(default="5m", min_length=1)
+    seed: int | None = None
+    timeout_seconds: float = Field(default=60.0, gt=0)
+
+
+class TypeSafeSettings(BaseModel):
+    enabled: bool = False
+    base_url: str = Field(default="https://api.typesafe.ai", min_length=1)
+    model: str = Field(default="jev-latest", min_length=1)
+    timeout_seconds: float = Field(default=1.0, gt=0)
+    high_confidence: float = Field(default=0.75, ge=0.0, le=1.0)
+    medium_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    api_key: str | None = None
+
+
 class RatingPresetSettings(BaseModel):
     min: int = Field(ge=0)
     max: int = Field(ge=0)
@@ -62,6 +117,11 @@ class Settings(BaseModel):
     lichess: LichessSettings = Field(default_factory=LichessSettings)
     stockfish: StockfishSettings = Field(default_factory=StockfishSettings)
     mongodb: MongoSettings = Field(default_factory=MongoSettings)
+    embeddings: EmbeddingsSettings = Field(default_factory=EmbeddingsSettings)
+    milvus: MilvusSettings = Field(default_factory=MilvusSettings)
+    rag: RagSettings = Field(default_factory=RagSettings)
+    llm: LLMSettings = Field(default_factory=LLMSettings)
+    typesafe: TypeSafeSettings = Field(default_factory=TypeSafeSettings)
     recommendations: RecommendationSettings = Field(default_factory=RecommendationSettings)
 
 
@@ -87,24 +147,71 @@ def get_settings() -> Settings:
 def _without_config_secrets(config: dict) -> dict:
     stripped = {**config}
 
-    lichess = stripped.get("lichess")
-    if isinstance(lichess, dict) and "token" in lichess:
-        logger.warning(
-            "lichess.token found in config.toml is ignored: "
-            "secrets must come from LICHESS_TOKEN in the environment or .env"
-        )
-        stripped["lichess"] = {key: value for key, value in lichess.items() if key != "token"}
-
-    mongodb = stripped.get("mongodb")
-    if isinstance(mongodb, dict) and "uri" in mongodb:
-        logger.warning(
-            "mongodb.uri found in config.toml is ignored: "
-            "the URI is environment-specific and must come from MONGODB_URI "
-            "in the environment or .env"
-        )
-        stripped["mongodb"] = {key: value for key, value in mongodb.items() if key != "uri"}
+    _strip_config_key(
+        stripped,
+        "lichess",
+        "token",
+        "lichess.token found in config.toml is ignored: "
+        "secrets must come from LICHESS_TOKEN in the environment or .env",
+    )
+    _strip_config_key(
+        stripped,
+        "mongodb",
+        "uri",
+        "mongodb.uri found in config.toml is ignored: "
+        "the URI is environment-specific and must come from MONGODB_URI "
+        "in the environment or .env",
+    )
+    _strip_config_key(
+        stripped,
+        "milvus",
+        "uri",
+        "milvus.uri found in config.toml is ignored: "
+        "the URI is environment-specific and must come from MILVUS_URI "
+        "in the environment or .env",
+    )
+    _strip_config_key(
+        stripped,
+        "embeddings",
+        "base_url",
+        "embeddings.base_url found in config.toml is ignored: "
+        "it is environment-specific and must come from OLLAMA_BASE_URL "
+        "in the environment or .env",
+    )
+    _strip_config_key(
+        stripped,
+        "llm",
+        "base_url",
+        "llm.base_url found in config.toml is ignored: "
+        "it is environment-specific and must come from OLLAMA_BASE_URL "
+        "in the environment or .env",
+    )
+    _strip_config_key(
+        stripped,
+        "typesafe",
+        "api_key",
+        "typesafe.api_key found in config.toml is ignored: "
+        "secrets must come from TYPESAFE_API_KEY in the environment or .env",
+    )
+    _strip_config_key(
+        stripped,
+        "typesafe",
+        "base_url",
+        "typesafe.base_url found in config.toml is ignored: "
+        "it is environment-specific and must come from TYPESAFE_BASE_URL "
+        "in the environment or .env",
+    )
 
     return stripped
+
+
+def _strip_config_key(config: dict, section: str, key: str, message: str) -> None:
+    values = config.get(section)
+    if not isinstance(values, dict) or key not in values:
+        return
+
+    logger.warning(message)
+    config[section] = {name: value for name, value in values.items() if name != key}
 
 
 def _with_secret_env(config: dict) -> dict:
@@ -117,6 +224,23 @@ def _with_secret_env(config: dict) -> dict:
     mongo_uri = os.environ.get("MONGODB_URI") or _read_dotenv_value("MONGODB_URI")
     if mongo_uri:
         merged["mongodb"] = {**merged.get("mongodb", {}), "uri": mongo_uri}
+
+    milvus_uri = os.environ.get("MILVUS_URI") or _read_dotenv_value("MILVUS_URI")
+    if milvus_uri:
+        merged["milvus"] = {**merged.get("milvus", {}), "uri": milvus_uri}
+
+    ollama_base_url = os.environ.get("OLLAMA_BASE_URL") or _read_dotenv_value("OLLAMA_BASE_URL")
+    if ollama_base_url:
+        merged["embeddings"] = {**merged.get("embeddings", {}), "base_url": ollama_base_url}
+        merged["llm"] = {**merged.get("llm", {}), "base_url": ollama_base_url}
+
+    typesafe_api_key = os.environ.get("TYPESAFE_API_KEY") or _read_dotenv_value("TYPESAFE_API_KEY")
+    if typesafe_api_key:
+        merged["typesafe"] = {**merged.get("typesafe", {}), "api_key": typesafe_api_key}
+
+    typesafe_base_url = os.environ.get("TYPESAFE_BASE_URL") or _read_dotenv_value("TYPESAFE_BASE_URL")
+    if typesafe_base_url:
+        merged["typesafe"] = {**merged.get("typesafe", {}), "base_url": typesafe_base_url}
 
     return merged
 

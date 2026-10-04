@@ -12,6 +12,7 @@ class AnalyzePositionRequest(BaseModel):
     pgn: str = Field(min_length=1)
     moves: list[str] = Field(min_length=1)
     level: PedagogicalLevel
+    question: str | None = Field(default=None, max_length=500)
     rating_min: int | None = Field(default=None, ge=0)
     rating_max: int | None = Field(default=None, ge=0)
     session_id: str | None = Field(default=None, min_length=1)
@@ -24,6 +25,14 @@ class AnalyzePositionRequest(BaseModel):
         except ValueError as exc:
             raise ValueError("fen must be a valid chess FEN") from exc
         return value
+
+    @field_validator("question")
+    @classmethod
+    def normalize_question(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
 
 class SessionEndRequest(BaseModel):
@@ -118,6 +127,16 @@ class RagContext(BaseModel):
     text: str
     source: str
     url: str | None
+    chunk_id: str | None = None
+    license_or_terms: str | None = None
+    page_id: str | None = None
+    section_index: int | None = None
+    part_index: int | None = None
+    section_title: str | None = None
+    relation_to_position: str | None = None
+    entry_move: str | None = None
+    opening_name: str | None = None
+    eco_code: str | None = None
 
 
 class Video(BaseModel):

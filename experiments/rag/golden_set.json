@@ -1,0 +1,20 @@
+{
+  "description": "Frozen French queries from the MVP scenarios. Relevance is judged at the passage level in judgments.json (correct source page, and section at section granularity), not by opening-name membership. Queries whose opening is absent from the curated prose corpus, and the out-of-theory scenario, are reported separately rather than scored as zeros.",
+  "queries": [
+    {"id": "sicilienne-najdorf", "query": "defense sicilienne najdorf", "style": "opening_name"},
+    {"id": "gambit-dame-refuse", "query": "gambit de la dame refuse", "style": "opening_name"},
+    {"id": "espagnole", "query": "ouverture espagnole", "style": "opening_name"},
+    {"id": "attaque-autrichienne", "query": "attaque autrichienne", "style": "opening_name"},
+    {"id": "francaise-winawer", "query": "defense francaise variante winawer", "style": "opening_name"},
+    {"id": "ligne-espagnole", "query": "1. e4 e5 2. Nf3 Nc6 3. Bb5", "style": "theoretic_line"},
+    {"id": "sortie-de-theorie", "query": "1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7", "style": "sortie"},
+    {"id": "sicilienne-debutant", "query": "comment jouer contre la sicilienne quand on est debutant", "style": "user_question"},
+    {"id": "dame-c4", "query": "que faire apres 1. d4 d5 2. c4", "style": "user_question"},
+    {"id": "scandinave", "query": "defense scandinave", "style": "opening_name"},
+    {"id": "italienne", "query": "ouverture italienne", "style": "opening_name"},
+    {"id": "caro-kann", "query": "defense caro-kann", "style": "opening_name"},
+    {"id": "gambit-roi", "query": "gambit du roi", "style": "opening_name"},
+    {"id": "nimzo-indienne", "query": "defense nimzo-indienne", "style": "opening_name"},
+    {"id": "est-indienne", "query": "defense est-indienne", "style": "opening_name"}
+  ]
+}

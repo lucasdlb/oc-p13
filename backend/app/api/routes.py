@@ -1,4 +1,6 @@
 from collections.abc import Iterator
+from functools import lru_cache
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -13,12 +15,18 @@ from backend.app.models.analysis import (
 )
 from backend.app.services.analysis import analyze_position
 from backend.app.services.cache_store import CacheStore, get_cache_store
+from backend.app.services.embeddings import OllamaEmbeddingProvider
+from backend.app.services.intent_router import IntentRouter, JevIntentClassifier
 from backend.app.services.lichess import LichessExplorerClient
+from backend.app.services.milvus import MilvusStore
+from backend.app.services.opening_tree import DEFAULT_OUTPUT_DIR, OpeningTree, OpeningTreeError
+from backend.app.services.rag import RagService
 from backend.app.services.session_store import SessionStore, get_session_store, now_iso
 from backend.app.services.stockfish import StockfishService
 
 
 router = APIRouter()
+logger = logging.getLogger("backend.api")
 
 
 def get_lichess_client() -> Iterator[LichessExplorerClient]:
@@ -28,6 +36,40 @@ def get_lichess_client() -> Iterator[LichessExplorerClient]:
 
 def get_stockfish_service() -> StockfishService:
     return StockfishService(get_settings().stockfish)
+
+
+@lru_cache
+def get_opening_tree() -> OpeningTree | None:
+    try:
+        return OpeningTree.from_snapshot_dir(DEFAULT_OUTPUT_DIR)
+    except OpeningTreeError as exc:
+        logger.warning("OpeningTree unavailable for RAG retrieval: %s", exc)
+        return None
+
+
+@lru_cache
+def get_intent_router() -> IntentRouter:
+    settings = get_settings().typesafe
+    primary = JevIntentClassifier(settings=settings) if settings.enabled else None
+    return IntentRouter(primary=primary, medium_confidence=settings.medium_confidence)
+
+
+@lru_cache
+def get_rag_service() -> RagService:
+    settings = get_settings()
+    provider = OllamaEmbeddingProvider(settings.embeddings)
+    digest = provider.model_digest()
+    signature = f"{settings.embeddings.model}@{digest}" if digest else None
+    store = MilvusStore(
+        settings.milvus,
+        embedding_signature=signature,
+        create_if_missing=False,
+    )
+    return RagService(
+        embedding_provider=provider,
+        store=store,
+        min_score=settings.rag.min_score,
+    )
 
 
 @router.get("/health")
@@ -42,8 +84,20 @@ def analyze_position_endpoint(
     stockfish_service: StockfishService = Depends(get_stockfish_service),
     cache_store: CacheStore = Depends(get_cache_store),
     session_store: SessionStore = Depends(get_session_store),
+    opening_tree: OpeningTree | None = Depends(get_opening_tree),
+    intent_router: IntentRouter | None = Depends(get_intent_router),
+    rag_service: RagService | None = Depends(get_rag_service),
 ) -> AnalyzePositionResponse:
-    return analyze_position(request, lichess_client, stockfish_service, cache_store, session_store)
+    return analyze_position(
+        request,
+        lichess_client,
+        stockfish_service,
+        cache_store,
+        session_store,
+        opening_tree,
+        intent_router,
+        rag_service,
+    )
 
 
 @router.post("/api/stockfish/evaluate")

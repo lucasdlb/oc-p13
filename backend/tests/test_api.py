@@ -7,7 +7,10 @@ from fastapi.testclient import TestClient
 from backend.app.main import app
 from backend.app.api.routes import (
     get_cache_store,
+    get_intent_router,
     get_lichess_client,
+    get_opening_tree,
+    get_rag_service,
     get_session_store,
     get_stockfish_service,
 )
@@ -16,6 +19,9 @@ from backend.app.models.analysis import AnalyzePositionRequest, LichessStats, Op
 from backend.app.services.analysis import _rating_buckets
 from backend.app.services.cache_store import CacheStore
 from backend.app.services.lichess import LichessExplorerResult
+from backend.app.services.intent_router import IntentRouter
+from backend.app.services.rag import RagRetrievalResult
+from backend.app.services.retrieval_contracts import OpeningTreeContext, OpeningTreeNodeContext, RetrievedContext
 from backend.app.services.session_store import SessionStore
 from backend.tests.fakes import FakeDatabase
 
@@ -142,6 +148,50 @@ class CountingStockfishService(SuccessfulStockfishService):
         return super().evaluate(_fen)
 
 
+RUY_TREE_NODE = OpeningTreeNodeContext(
+    node_id="ruy-node",
+    eco_code="C60",
+    opening_name="Ruy Lopez",
+    pgn="1. e4 e5 2. Nf3 Nc6 3. Bb5",
+    uci=("e2e4", "e7e5", "g1f3", "b8c6", "f1b5"),
+    san=("e4", "e5", "Nf3", "Nc6", "Bb5"),
+    fen="ruy-fen",
+    epd="ruy-epd",
+    depth=5,
+)
+
+BERLIN_TREE_NODE = OpeningTreeNodeContext(
+    node_id="berlin-node",
+    eco_code="C65",
+    opening_name="Ruy Lopez: Berlin Defense",
+    pgn="1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6",
+    uci=("e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "g8f6"),
+    san=("e4", "e5", "Nf3", "Nc6", "Bb5", "Nf6"),
+    fen="berlin-fen",
+    epd="berlin-epd",
+    depth=6,
+    entry_move="Nf6",
+)
+
+
+class FakeOpeningTree:
+    def context_for_position(self, *, moves: tuple[str, ...], fen: str | None = None) -> OpeningTreeContext:
+        return OpeningTreeContext(current=RUY_TREE_NODE, children=(BERLIN_TREE_NODE,))
+
+
+class FakeRagService:
+    def __init__(self, result: RagRetrievalResult | None = None, *, fail: bool = False) -> None:
+        self.result = result or RagRetrievalResult(contexts=())
+        self.fail = fail
+        self.calls: list[dict] = []
+
+    def retrieve(self, plan, query: str) -> RagRetrievalResult:  # type: ignore[no-untyped-def]
+        self.calls.append({"plan": plan, "query": query})
+        if self.fail:
+            raise RuntimeError("rag unavailable")
+        return self.result
+
+
 @pytest.fixture(autouse=True)
 def hermetic_lichess_client() -> Iterator[None]:
     app.dependency_overrides[get_lichess_client] = lambda: DisabledLichessClient()
@@ -158,6 +208,14 @@ def hermetic_stores() -> Iterator[FakeDatabase]:
     )
     app.dependency_overrides[get_session_store] = lambda: SessionStore(database=database)
     yield database
+
+
+@pytest.fixture(autouse=True)
+def hermetic_rag() -> Iterator[None]:
+    app.dependency_overrides[get_opening_tree] = lambda: None
+    app.dependency_overrides[get_intent_router] = lambda: None
+    app.dependency_overrides[get_rag_service] = lambda: None
+    yield
 
 
 def _post_analysis(payload: dict) -> dict:
@@ -310,11 +368,21 @@ def test_analyze_position_returns_documented_contract() -> None:
             "reason": None,
         },
         "rag_context": [
-                {
-                    "text": "Apres 1. e4, les blancs occupent le centre et liberent la dame et le fou roi.",
-                    "source": "demo-pedagogical-seed",
-                    "url": None,
-                }
+            {
+                "text": "Apres 1. e4, les blancs occupent le centre et liberent la dame et le fou roi.",
+                "source": "demo-pedagogical-seed",
+                "url": None,
+                "chunk_id": None,
+                "license_or_terms": None,
+                "page_id": None,
+                "section_index": None,
+                "part_index": None,
+                "section_title": None,
+                "relation_to_position": "fallback",
+                "entry_move": None,
+                "opening_name": "King's Pawn Game",
+                "eco_code": "B00",
+            }
         ],
         "coach_explanation": "Tu as joue 1. e4 : ce coup prend de l'espace au centre et prepare le developpement rapide des pieces. Les reponses ...e5 et ...c5 sont deux plans classiques a connaitre.",
         "stockfish": None,
@@ -527,11 +595,213 @@ def test_analyze_position_uses_lichess_opening_when_local_seed_unknown() -> None
             "text": "Lichess Opening Explorer identifie la ligne comme B00 King's Pawn.",
             "source": "lichess-opening-explorer",
             "url": None,
+            "chunk_id": None,
+            "license_or_terms": None,
+            "page_id": None,
+            "section_index": None,
+            "part_index": None,
+            "section_title": None,
+            "relation_to_position": "fallback",
+            "entry_move": None,
+            "opening_name": "King's Pawn",
+            "eco_code": "B00",
         }
     ]
     assert "opening_not_matched" not in body["fallbacks_used"]
     assert "demo_opening_seed" not in body["fallbacks_used"]
     assert "youtube_search_fallback" in body["fallbacks_used"]
+
+
+def test_analyze_position_maps_retrieved_rag_context_with_source_attribution() -> None:
+    rag_service = FakeRagService(
+        RagRetrievalResult(
+            contexts=(
+                RetrievedContext(
+                    chunk_id="chunk-1",
+                    text="Ruy Lopez plans focus on central pressure and quick development.",
+                    source="wikibooks",
+                    source_url="https://en.wikibooks.org/wiki/Chess_Opening_Theory/1._e4/1...e5/2._Nf3/2...Nc6/3._Bb5",
+                    license_or_terms="CC BY-SA 4.0",
+                    page_id="wikibooks::Ruy_Lopez",
+                    canonical_title="Ruy Lopez",
+                    section_index=2,
+                    part_index=0,
+                    section_title="Plans",
+                    score=0.87,
+                    relation_to_position="current",
+                    opening_node_id="ruy-node",
+                    eco_code="C60",
+                    opening_name="Ruy Lopez",
+                    intent="plan",
+                ),
+            )
+        )
+    )
+    app.dependency_overrides[get_opening_tree] = lambda: FakeOpeningTree()
+    app.dependency_overrides[get_intent_router] = lambda: IntentRouter()
+    app.dependency_overrides[get_rag_service] = lambda: rag_service
+
+    body = _post_analysis(
+        {
+            "fen": "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 2 3",
+            "pgn": "1. e4 e5 2. Nf3 Nc6 3. Bb5",
+            "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"],
+            "level": "intermediaire",
+        }
+    )
+
+    assert body["rag_context"] == [
+        {
+            "text": "Ruy Lopez plans focus on central pressure and quick development.",
+            "source": "wikibooks",
+            "url": "https://en.wikibooks.org/wiki/Chess_Opening_Theory/1._e4/1...e5/2._Nf3/2...Nc6/3._Bb5",
+            "chunk_id": "chunk-1",
+            "license_or_terms": "CC BY-SA 4.0",
+            "page_id": "wikibooks::Ruy_Lopez",
+            "section_index": 2,
+            "part_index": 0,
+            "section_title": "Plans",
+            "relation_to_position": "current",
+            "entry_move": None,
+            "opening_name": "Ruy Lopez",
+            "eco_code": "C60",
+        }
+    ]
+    assert rag_service.calls
+    assert "rag_unavailable" not in body["fallbacks_used"]
+
+
+def test_analyze_position_question_can_trigger_next_move_child_retrieval() -> None:
+    rag_service = FakeRagService(
+        RagRetrievalResult(
+            contexts=(
+                RetrievedContext(
+                    chunk_id="berlin-child",
+                    text="After ...Nf6, the Berlin is a possible continuation.",
+                    source="wikibooks",
+                    source_url="https://en.wikibooks.org/wiki/Chess_Opening_Theory/Ruy_Lopez",
+                    license_or_terms="CC BY-SA 4.0",
+                    page_id="wikibooks::Ruy_Lopez",
+                    canonical_title="Ruy Lopez",
+                    section_index=3,
+                    part_index=0,
+                    section_title="Berlin Defense",
+                    score=0.82,
+                    relation_to_position="child",
+                    entry_move="Nf6",
+                    opening_node_id="berlin-node",
+                    eco_code="C65",
+                    opening_name="Ruy Lopez: Berlin Defense",
+                    intent="variation",
+                ),
+            )
+        )
+    )
+    app.dependency_overrides[get_opening_tree] = lambda: FakeOpeningTree()
+    app.dependency_overrides[get_intent_router] = lambda: IntentRouter()
+    app.dependency_overrides[get_rag_service] = lambda: rag_service
+
+    body = _post_analysis(
+        {
+            "fen": "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 2 3",
+            "pgn": "1. e4 e5 2. Nf3 Nc6 3. Bb5",
+            "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"],
+            "level": "intermediaire",
+            "question": "Que peuvent jouer les Noirs ?",
+        }
+    )
+
+    call = rag_service.calls[0]
+    assert call["plan"].intent == "ask_next_moves"
+    assert any(bucket.relation_to_position == "child" for bucket in call["plan"].buckets)
+    assert "Question: Que peuvent jouer les Noirs ?" in call["query"]
+    assert body["rag_context"][0]["relation_to_position"] == "child"
+    assert body["rag_context"][0]["entry_move"] == "Nf6"
+
+
+def test_analyze_position_question_can_trigger_specific_candidate_retrieval() -> None:
+    rag_service = FakeRagService(
+        RagRetrievalResult(
+            contexts=(
+                RetrievedContext(
+                    chunk_id="berlin-specific",
+                    text="The Berlin Defense begins with ...Nf6.",
+                    source="wikibooks",
+                    source_url="https://en.wikibooks.org/wiki/Chess_Opening_Theory/Ruy_Lopez",
+                    license_or_terms="CC BY-SA 4.0",
+                    page_id="wikibooks::Ruy_Lopez",
+                    canonical_title="Ruy Lopez",
+                    section_index=3,
+                    part_index=0,
+                    section_title="Berlin Defense",
+                    score=0.84,
+                    relation_to_position="child",
+                    entry_move="Nf6",
+                    opening_node_id="berlin-node",
+                    eco_code="C65",
+                    opening_name="Ruy Lopez: Berlin Defense",
+                    intent="variation",
+                ),
+            )
+        )
+    )
+    app.dependency_overrides[get_opening_tree] = lambda: FakeOpeningTree()
+    app.dependency_overrides[get_intent_router] = lambda: IntentRouter()
+    app.dependency_overrides[get_rag_service] = lambda: rag_service
+
+    body = _post_analysis(
+        {
+            "fen": "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 2 3",
+            "pgn": "1. e4 e5 2. Nf3 Nc6 3. Bb5",
+            "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"],
+            "level": "intermediaire",
+            "question": "Et ...Nf6 ?",
+        }
+    )
+
+    call = rag_service.calls[0]
+    assert call["plan"].intent == "ask_specific_candidate"
+    child_buckets = [bucket for bucket in call["plan"].buckets if bucket.relation_to_position == "child"]
+    assert child_buckets[0].node_ids == ("berlin-node",)
+    assert child_buckets[0].entry_move == "Nf6"
+    assert "Question: Et ...Nf6 ?" in call["query"]
+    assert body["rag_context"][0]["relation_to_position"] == "child"
+    assert body["rag_context"][0]["entry_move"] == "Nf6"
+
+
+def test_analyze_position_keeps_success_when_rag_retrieval_fails() -> None:
+    app.dependency_overrides[get_opening_tree] = lambda: FakeOpeningTree()
+    app.dependency_overrides[get_intent_router] = lambda: IntentRouter()
+    app.dependency_overrides[get_rag_service] = lambda: FakeRagService(fail=True)
+
+    body = _post_analysis(
+        {
+            "fen": KINGS_PAWN_FEN,
+            "pgn": "1. e4",
+            "moves": ["e2e4"],
+            "level": "debutant",
+        }
+    )
+
+    assert body["opening"]["name"] == "King's Pawn Game"
+    assert body["rag_context"] == [
+        {
+            "text": "Apres 1. e4, les blancs occupent le centre et liberent la dame et le fou roi.",
+            "source": "demo-pedagogical-seed",
+            "url": None,
+            "chunk_id": None,
+            "license_or_terms": None,
+            "page_id": None,
+            "section_index": None,
+            "part_index": None,
+            "section_title": None,
+            "relation_to_position": "fallback",
+            "entry_move": None,
+            "opening_name": "King's Pawn Game",
+            "eco_code": "B00",
+        }
+    ]
+    assert "rag_unavailable" in body["fallbacks_used"]
 
 
 def test_analyze_position_prefers_lichess_opening_over_local_seed() -> None:

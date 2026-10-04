@@ -352,6 +352,65 @@ Lichess décrit la pratique et le RAG explique les idées.
 Ne présente jamais une information absente des sources comme un fait.
 ```
 
+## Routeur D'Intention Avec Jev / System One
+
+Le point fragile du routage n'est pas l'execution des outils, mais la classification de la question utilisateur. Une classification rule-based pure risque de devenir fragile avec les formulations naturelles : `que jouer`, `je fais quoi`, `quel plan`, `pourquoi ce coup`, `est-ce une erreur`, etc. Un LLM generatif peut classifier, mais il est plus lent, plus couteux, et impose de parser/valider une sortie texte.
+
+Une technologie de type **Jev / System One** est mieux alignee avec ce besoin : elle ne genere pas de texte, elle retourne une decision typee avec probabilites et confidence. Son role cible serait uniquement de classifier l'intention, pas d'orchestrer librement les sources et pas de produire la reponse coach.
+
+Architecture recommandee :
+
+```text
+Question utilisateur + etat structure de la position
+  -> IntentRouter
+       - Jev/System-One si disponible et valide
+       - fallback rule-based conservateur sinon
+  -> RetrievalPlan construit par le code
+  -> outils de retrieval
+  -> LLM coach pour synthese sourcee
+```
+
+Intentions candidates :
+
+```text
+explain_current_position
+ask_next_moves
+ask_specific_candidate
+evaluate_move_quality
+general_principle
+unclear
+```
+
+Exemple de plan derive :
+
+```json
+{
+  "intent": "ask_next_moves",
+  "confidence": 0.82,
+  "tree_context": true,
+  "current_prose": true,
+  "candidate_prose": true,
+  "general_principles": false,
+  "stockfish": false,
+  "max_current_chunks": 2,
+  "max_child_chunks": 2,
+  "child_depth": 1
+}
+```
+
+Politique de confidence :
+
+```text
+confidence haute   -> appliquer le plan
+confidence moyenne -> appliquer le plan avec budget enfant serre
+confidence basse   -> fallback : arbre + prose du noeud courant
+routeur absent     -> fallback : arbre + prose du noeud courant
+```
+
+Les contraintes critiques restent codees en dur : enfants directs seulement, descendants profonds exclus, prose enfant toujours conditionnelle, Stockfish prioritaire pour la correction tactique, aucune affirmation non sourcee.
+
+Jev/System-One doit donc etre traite comme une dependance optionnelle a valider par ADR/recherche, pas comme une brique obligatoire du POC local.
+
 ## Principes de Performance
 
 - Exécuter les sources indépendantes en parallèle.
@@ -362,3 +421,42 @@ Ne présente jamais une information absente des sources comme un fait.
 - Préférer un seul appel LLM final aux boucles successives lorsque la question est simple.
 
 L'objectif est de conserver une expérience de l'ordre d'une à deux secondes pour une analyse standard, tout en réservant le tool calling itératif aux questions qui nécessitent réellement plusieurs observations.
+
+## Amelioration RAG: Fenetre Locale D'Ouverture
+
+Le retrieval prose ne doit pas ignorer la structure d'arbre des ouvertures. Les TSV `lichess-org/chess-openings` forment un arbre de lignes; Milvus contient seulement la prose pedagogique. La bonne amelioration est donc de combiner les deux sans les confondre.
+
+Politique recommandee :
+
+- Identifier le noeud courant dans l'arbre d'ouvertures.
+- Recuperer le parent immediat, le noeud courant et les enfants directs.
+- Exclure les descendants profonds par defaut.
+- Utiliser les petits-enfants seulement comme signal interne de ranking, sauf si le coup a ete joue ou si l'utilisateur demande explicitement cette suite.
+- Recuperer la prose Milvus du noeud courant comme contexte principal.
+- Recuperer eventuellement la prose des enfants directs comme contexte conditionnel de suites possibles.
+
+Cette approche permet au coach de dire :
+
+```text
+Depuis cette position, ...Nf6 mene a la Defense berlinoise.
+Si les Noirs jouent ...Nf6, l'idee est de developper en attaquant e4.
+```
+
+Elle doit lui interdire de dire :
+
+```text
+La position est une Defense berlinoise.
+```
+
+tant que `...Nf6` n'a pas ete joue.
+
+Le contexte LLM doit separer explicitement :
+
+```text
+POSITION COURANTE
+SUITES POSSIBLES DIRECTES
+PROSE POSITION ACTUELLE
+PROSE SUR SUITES POSSIBLES
+```
+
+Les passages de `PROSE SUR SUITES POSSIBLES` doivent porter `relation_to_position = child` et `entry_move`, et etre formules au conditionnel. Cela donne au LLM les idees pedagogiques des continuations candidates sans polluer l'explication de la position actuelle avec une variante plusieurs coups trop loin.
