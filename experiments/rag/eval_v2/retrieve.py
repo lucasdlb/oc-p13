@@ -26,8 +26,13 @@ from backend.app.services.embeddings import (
 from backend.app.services.intent_router import CandidateMove, IntentDecision, IntentRouter, IntentRouterContext
 from backend.app.services.milvus import MilvusStore, MilvusStoreError
 from backend.app.services.opening_tree import OpeningTree
+from backend.app.services.coach import CoachFallbackError, CoachService
 from backend.app.services.rag import RagService
-from backend.app.services.retrieval_contracts import OpeningTreeContext, RetrievedContext
+from backend.app.services.retrieval_contracts import (
+    OpeningTreeContext,
+    RetrievedContext,
+    build_coach_context,
+)
 from backend.app.services.retrieval_plan_builder import build_retrieval_plan
 from experiments.rag.eval_v2.metrics import score_run
 
@@ -143,11 +148,13 @@ def retrieve_cases(
     *,
     k: int,
     min_score: float | None,
+    router: IntentRouter | None = None,
+    coach_service: CoachService | None = None,
 ) -> tuple[dict[str, list[dict]], dict[str, list[float]], dict[str, dict]]:
     retrieved: dict[str, list[dict]] = {}
     pipeline: dict[str, dict] = {}
     latency = {"embed": [], "search": [], "total": []}
-    router = IntentRouter()
+    router = router or IntentRouter()
     rag = RagService(embedding_provider=provider, store=store, min_score=min_score)
     for case in cases:
         query = _query_text(case)
@@ -169,6 +176,13 @@ def retrieve_cases(
             "retrieval_plan": plan.to_artifact(),
             "rag_result": result.to_artifact(),
         }
+        if coach_service is not None:
+            pipeline[case["id"]]["coach_explanation"] = _coach_explanation(
+                coach_service,
+                case,
+                tree_context,
+                result.contexts,
+            )
     return retrieved, latency, pipeline
 
 
@@ -334,6 +348,32 @@ def _write_run(
         encoding="utf-8",
     )
     return run_dir
+
+
+def _coach_explanation(
+    coach_service: CoachService,
+    case: dict,
+    tree_context: OpeningTreeContext,
+    contexts: tuple[RetrievedContext, ...],
+) -> dict:
+    # Child prose must carry an entry_move for conditional framing; drop any
+    # retrieved child context that is missing it so coach-context building does
+    # not crash the experiment runner.
+    usable_contexts = tuple(
+        ctx
+        for ctx in contexts
+        if ctx.relation_to_position != "child" or ctx.entry_move
+    )
+    context = build_coach_context(
+        tree_context=tree_context,
+        retrieved_contexts=usable_contexts,
+        fallbacks=(),
+    )
+    try:
+        text = coach_service.explain(context, level=case.get("level") or "intermediaire")
+    except CoachFallbackError as exc:
+        return {"text": exc.text, "fallback_label": exc.fallback_label}
+    return {"text": text, "fallback_label": None}
 
 
 def _build_provider(name: str, settings) -> EmbeddingProvider:  # type: ignore[no-untyped-def]

@@ -19,6 +19,7 @@ from backend.app.services.cache_store import (
     masters_cache_key,
     stockfish_cache_key,
 )
+from backend.app.services.coach import CoachFallbackError, CoachService, ConservativeCoachService
 from backend.app.services.lichess import (
     LICHESS_SOURCE,
     LichessExplorerClient,
@@ -28,7 +29,11 @@ from backend.app.services.opening_book import DEMO_OPENING_SOURCE, match_opening
 from backend.app.services.intent_router import CandidateMove, IntentRouter, IntentRouterContext, RouterSource
 from backend.app.services.opening_tree import OpeningTree
 from backend.app.services.rag import RagService
-from backend.app.services.retrieval_contracts import OpeningTreeContext, RetrievedContext
+from backend.app.services.retrieval_contracts import (
+    OpeningTreeContext,
+    RetrievedContext,
+    build_coach_context,
+)
 from backend.app.services.retrieval_plan_builder import build_retrieval_plan
 from backend.app.services.session_store import SessionStore, build_move_docs
 from backend.app.services.stockfish import StockfishService, engine_version
@@ -46,6 +51,7 @@ def analyze_position(
     opening_tree: OpeningTree | None = None,
     intent_router: IntentRouter | None = None,
     rag_service: RagService | None = None,
+    coach_service: CoachService | None = None,
 ) -> AnalyzePositionResponse:
     all_settings = get_settings()
     settings = all_settings.recommendations
@@ -102,7 +108,7 @@ def analyze_position(
     if masters_result.fallback:
         fallbacks_used.append(masters_result.fallback)
 
-    rag_context, rag_context_text, rag_fallbacks = _retrieve_rag_context(
+    rag_context, rag_fallbacks, tree_context, retrieved_contexts = _retrieve_rag_context(
         request,
         opening,
         context,
@@ -134,6 +140,19 @@ def analyze_position(
     query = quote_plus(f"{opening.name} chess opening {request.level}")
 
     session_id = _sync_session(session_store, request, fallbacks_used)
+    coach_context = build_coach_context(
+        tree_context=tree_context,
+        retrieved_contexts=retrieved_contexts,
+        lichess_stats=lichess_result.stats.model_dump(),
+        stockfish=stockfish,
+        fallbacks=tuple(fallbacks_used),
+    )
+
+    try:
+        coach_explanation = (coach_service or ConservativeCoachService()).explain(coach_context, level=request.level)
+    except CoachFallbackError as exc:
+        coach_explanation = exc.text
+        fallbacks_used.append(exc.fallback_label)
 
     response = AnalyzePositionResponse(
         opening=opening,
@@ -148,7 +167,7 @@ def analyze_position(
         lichess_stats=lichess_result.stats,
         source_confidence=confidence,
         rag_context=rag_context,
-        coach_explanation=_coach_explanation(opening, request.level, recommended_moves, rag_context_text),
+        coach_explanation=coach_explanation,
         stockfish=stockfish,
         videos=[
             Video(
@@ -442,10 +461,11 @@ def _retrieve_rag_context(
     opening_tree: OpeningTree | None,
     intent_router: IntentRouter | None,
     rag_service: RagService | None,
-) -> tuple[list[RagContext], str, list[str]]:
+) -> tuple[list[RagContext], list[str], OpeningTreeContext, tuple[RetrievedContext, ...]]:
     fallback_context = _fallback_rag_context(opening, fallback_text)
+    fallback_tree_context = _fallback_tree_context(opening)
     if opening_tree is None or intent_router is None or rag_service is None:
-        return [fallback_context], fallback_text, []
+        return [fallback_context], [], fallback_tree_context, ()
 
     try:
         tree_context = opening_tree.context_for_position(moves=tuple(request.moves), fen=request.fen)
@@ -453,7 +473,7 @@ def _retrieve_rag_context(
         plan = build_retrieval_plan(tree_context, decision)
         result = rag_service.retrieve(plan, _rag_query(request, opening, tree_context))
     except Exception:  # noqa: BLE001 - RAG must not break the analysis endpoint
-        return [fallback_context], fallback_text, ["rag_unavailable"]
+        return [fallback_context], ["rag_unavailable"], fallback_tree_context, ()
 
     fallbacks = [
         *_intent_router_fallback_labels(decision.source),
@@ -461,9 +481,16 @@ def _retrieve_rag_context(
     ]
     contexts = [_retrieved_context_to_api(context) for context in result.contexts]
     if not contexts:
-        return [fallback_context], fallback_text, fallbacks
+        return [fallback_context], fallbacks, tree_context, ()
 
-    return contexts, "\n\n".join(context.text for context in result.contexts), fallbacks
+    return contexts, fallbacks, tree_context, result.contexts
+
+
+def _fallback_tree_context(opening: Opening) -> OpeningTreeContext:
+    return OpeningTreeContext(
+        state="matched" if opening.matched else "out_of_theory",
+        fallback_opening_name=opening.name if opening.matched else None,
+    )
 
 
 def _intent_context(request: AnalyzePositionRequest, tree_context: OpeningTreeContext) -> IntentRouterContext:
@@ -564,37 +591,3 @@ def _rag_source(opening: Opening) -> str:
         return LICHESS_SOURCE
     return "demo-pedagogical-seed"
 
-
-def _coach_explanation(
-    opening: Opening,
-    level: str,
-    recommended_moves: list[RecommendedMove],
-    context: str,
-) -> str:
-    if opening.source == DEMO_OPENING_SOURCE and opening.name == "King's Pawn Game":
-        return (
-            "Tu as joue 1. e4 : ce coup prend de l'espace au centre et prepare le "
-            "developpement rapide des pieces. Les reponses ...e5 et ...c5 sont deux "
-            "plans classiques a connaitre."
-        )
-
-    if not opening.matched:
-        return (
-            "Cette position sort du seed local d'ouvertures. Pour la demo, l'etape suivante "
-            "sera de declencher Stockfish afin de proposer une evaluation sourcee."
-        )
-
-    if opening.source == LICHESS_SOURCE:
-        explanation = (
-            f"Lichess Opening Explorer identifie l'ouverture {opening.name} "
-            f"({opening.eco}), expliquee ici pour un niveau {level}."
-        )
-        if recommended_moves and recommended_moves[0].games is not None:
-            best = recommended_moves[0]
-            explanation += (
-                f" Le coup le plus joue dans les donnees Lichess est {best.san}, "
-                f"present dans {best.games} parties de reference."
-            )
-        return explanation
-
-    return f"Niveau {level} : {context}"

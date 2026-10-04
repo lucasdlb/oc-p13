@@ -57,7 +57,7 @@ timeout_seconds = 60.0
 [typesafe]
 enabled = false
 model = "jev-latest"
-timeout_seconds = 1.0
+timeout_seconds = 5.0
 high_confidence = 0.75
 medium_confidence = 0.5
 

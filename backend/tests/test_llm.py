@@ -92,3 +92,19 @@ def test_fake_provider_can_queue_responses_and_errors() -> None:
     with pytest.raises(LLMProviderError, match="boom"):
         provider.generate("prompt 2")
     assert provider.generate("prompt 3") == "troisieme"
+
+
+def test_generate_raises_on_timeout() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.TimeoutException("timed out", request=None)
+
+    with pytest.raises(LLMProviderError, match="timed out"):
+        _provider(handler).generate("hi")
+
+
+def test_generate_raises_on_malformed_json() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not json")
+
+    with pytest.raises(LLMProviderError):
+        _provider(handler).generate("hi")

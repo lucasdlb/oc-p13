@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from backend.app.main import app
 from backend.app.api.routes import (
     get_cache_store,
+    get_coach_service,
     get_intent_router,
     get_lichess_client,
     get_opening_tree,
@@ -18,8 +19,11 @@ from backend.app.core.settings import get_settings
 from backend.app.models.analysis import AnalyzePositionRequest, LichessStats, Opening, RecommendedMove
 from backend.app.services.analysis import _rating_buckets
 from backend.app.services.cache_store import CacheStore
+from backend.app.services.coach import ConservativeCoachService
 from backend.app.services.lichess import LichessExplorerResult
-from backend.app.services.intent_router import IntentRouter
+from backend.app.services.intent_router import IntentRouter, IntentRouterError
+from backend.app.services.coach import LlmCoachService
+from backend.app.services.llm import FakeLLMProvider, LLMProviderError
 from backend.app.services.rag import RagRetrievalResult
 from backend.app.services.retrieval_contracts import OpeningTreeContext, OpeningTreeNodeContext, RetrievedContext
 from backend.app.services.session_store import SessionStore
@@ -192,6 +196,11 @@ class FakeRagService:
         return self.result
 
 
+class FailingIntentPrimary:
+    def classify(self, _context):  # type: ignore[no-untyped-def]
+        raise IntentRouterError("provider unavailable")
+
+
 @pytest.fixture(autouse=True)
 def hermetic_lichess_client() -> Iterator[None]:
     app.dependency_overrides[get_lichess_client] = lambda: DisabledLichessClient()
@@ -215,6 +224,12 @@ def hermetic_rag() -> Iterator[None]:
     app.dependency_overrides[get_opening_tree] = lambda: None
     app.dependency_overrides[get_intent_router] = lambda: None
     app.dependency_overrides[get_rag_service] = lambda: None
+    yield
+
+
+@pytest.fixture(autouse=True)
+def hermetic_coach_service() -> Iterator[None]:
+    app.dependency_overrides[get_coach_service] = lambda: ConservativeCoachService()
     yield
 
 
@@ -384,7 +399,7 @@ def test_analyze_position_returns_documented_contract() -> None:
                 "eco_code": "B00",
             }
         ],
-        "coach_explanation": "Tu as joue 1. e4 : ce coup prend de l'espace au centre et prepare le developpement rapide des pieces. Les reponses ...e5 et ...c5 sont deux plans classiques a connaitre.",
+        "coach_explanation": "Je n'ai pas assez de contexte source pour formuler une explication fiable. Je peux seulement signaler la ligne identifiee: King's Pawn Game.",
         "stockfish": None,
         "videos": [
             {
@@ -667,6 +682,9 @@ def test_analyze_position_maps_retrieved_rag_context_with_source_attribution() -
             "eco_code": "C60",
         }
     ]
+    assert "Dans la position actuelle" in body["coach_explanation"]
+    assert "Ruy Lopez plans focus on central pressure and quick development." in body["coach_explanation"]
+    assert "[source: Plans, CC BY-SA 4.0]" in body["coach_explanation"]
     assert rag_service.calls
     assert "rag_unavailable" not in body["fallbacks_used"]
 
@@ -717,6 +735,57 @@ def test_analyze_position_question_can_trigger_next_move_child_retrieval() -> No
     assert "Question: Que peuvent jouer les Noirs ?" in call["query"]
     assert body["rag_context"][0]["relation_to_position"] == "child"
     assert body["rag_context"][0]["entry_move"] == "Nf6"
+    assert "Si les Noirs jouent ...Nf6" in body["coach_explanation"]
+    assert "After ...Nf6, the Berlin is a possible continuation." in body["coach_explanation"]
+    assert "Dans la position actuelle" not in body["coach_explanation"]
+
+
+def test_analyze_position_reports_intent_router_provider_unavailable_fallback() -> None:
+    rag_service = FakeRagService(
+        RagRetrievalResult(
+            contexts=(
+                RetrievedContext(
+                    chunk_id="berlin-child",
+                    text="After ...Nf6, the Berlin is a possible continuation.",
+                    source="wikibooks",
+                    source_url="https://en.wikibooks.org/wiki/Chess_Opening_Theory/Ruy_Lopez",
+                    license_or_terms="CC BY-SA 4.0",
+                    page_id="wikibooks::Ruy_Lopez",
+                    canonical_title="Ruy Lopez",
+                    section_index=3,
+                    part_index=0,
+                    section_title="Berlin Defense",
+                    score=0.82,
+                    relation_to_position="child",
+                    entry_move="Nf6",
+                    opening_node_id="berlin-node",
+                    eco_code="C65",
+                    opening_name="Ruy Lopez: Berlin Defense",
+                    intent="variation",
+                ),
+            )
+        )
+    )
+    app.dependency_overrides[get_opening_tree] = lambda: FakeOpeningTree()
+    app.dependency_overrides[get_intent_router] = lambda: IntentRouter(primary=FailingIntentPrimary())
+    app.dependency_overrides[get_rag_service] = lambda: rag_service
+
+    body = _post_analysis(
+        {
+            "fen": "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 2 3",
+            "pgn": "1. e4 e5 2. Nf3 Nc6 3. Bb5",
+            "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"],
+            "level": "intermediaire",
+            "question": "Que peuvent jouer les Noirs ?",
+        }
+    )
+
+    call = rag_service.calls[0]
+    assert call["plan"].intent == "ask_next_moves"
+    assert any(bucket.relation_to_position == "child" for bucket in call["plan"].buckets)
+    assert body["rag_context"][0]["relation_to_position"] == "child"
+    assert "intent_router_provider_unavailable" in body["fallbacks_used"]
+    assert "rag_unavailable" not in body["fallbacks_used"]
 
 
 def test_analyze_position_question_can_trigger_specific_candidate_retrieval() -> None:
@@ -801,6 +870,11 @@ def test_analyze_position_keeps_success_when_rag_retrieval_fails() -> None:
             "eco_code": "B00",
         }
     ]
+    assert body["coach_explanation"] == (
+        "Je n'ai pas assez de contexte source pour formuler une explication fiable. "
+        "Je peux seulement signaler la ligne identifiee: King's Pawn Game."
+    )
+    assert "occupe le centre" not in body["coach_explanation"]
     assert "rag_unavailable" in body["fallbacks_used"]
 
 
@@ -823,9 +897,8 @@ def test_analyze_position_prefers_lichess_opening_over_local_seed() -> None:
     assert body["recommended_moves"][0]["games"] == 60
     assert "demo_opening_seed" not in body["fallbacks_used"]
     assert body["coach_explanation"] == (
-        "Lichess Opening Explorer identifie l'ouverture King's Pawn (B00), "
-        "expliquee ici pour un niveau intermediaire. Le coup le plus joue dans les "
-        "donnees Lichess est e5, present dans 60 parties de reference."
+        "Je n'ai pas assez de contexte source pour formuler une explication fiable. "
+        "Je peux seulement signaler la ligne identifiee: King's Pawn."
     )
 
 
@@ -1191,3 +1264,54 @@ class CountingFallbackLichessClient(FallbackLichessClient):
     def fetch_explorer_analysis(self, _moves: list[str]) -> LichessExplorerResult:
         self.calls += 1
         return super().fetch_explorer_analysis(_moves)
+
+
+def test_analyze_position_uses_llm_coach_when_configured() -> None:
+    app.dependency_overrides[get_lichess_client] = lambda: SuccessfulLichessClient()
+    app.dependency_overrides[get_coach_service] = lambda: LlmCoachService(
+        provider=FakeLLMProvider(response="Explication LLM. [source: King's Pawn, CC BY-SA 4.0]")
+    )
+
+    data = _post_analysis({
+        "fen": KINGS_PAWN_FEN,
+        "pgn": "1. e4",
+        "moves": ["e2e4"],
+        "level": "debutant",
+    })
+
+    assert data["coach_explanation"] == "Explication LLM. [source: King's Pawn, CC BY-SA 4.0]"
+    assert "llm_coach_unavailable" not in data["fallbacks_used"]
+
+
+def test_analyze_position_falls_back_to_template_when_llm_missing_citations() -> None:
+    app.dependency_overrides[get_lichess_client] = lambda: SuccessfulLichessClient()
+    app.dependency_overrides[get_coach_service] = lambda: LlmCoachService(
+        provider=FakeLLMProvider(response="Explication sans citation.")
+    )
+
+    data = _post_analysis({
+        "fen": KINGS_PAWN_FEN,
+        "pgn": "1. e4",
+        "moves": ["e2e4"],
+        "level": "debutant",
+    })
+
+    assert "llm_coach_unavailable" in data["fallbacks_used"]
+    assert "Je n'ai pas assez de contexte source" in data["coach_explanation"]
+
+
+def test_analyze_position_falls_back_on_llm_provider_error() -> None:
+    app.dependency_overrides[get_lichess_client] = lambda: SuccessfulLichessClient()
+    app.dependency_overrides[get_coach_service] = lambda: LlmCoachService(
+        provider=FakeLLMProvider(responses=[LLMProviderError("ollama down")])
+    )
+
+    data = _post_analysis({
+        "fen": KINGS_PAWN_FEN,
+        "pgn": "1. e4",
+        "moves": ["e2e4"],
+        "level": "debutant",
+    })
+
+    assert "llm_coach_unavailable" in data["fallbacks_used"]
+    assert "Je n'ai pas assez de contexte source" in data["coach_explanation"]

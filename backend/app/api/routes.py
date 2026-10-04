@@ -15,6 +15,8 @@ from backend.app.models.analysis import (
 )
 from backend.app.services.analysis import analyze_position
 from backend.app.services.cache_store import CacheStore, get_cache_store
+from backend.app.services.coach import CoachService, ConservativeCoachService, LlmCoachService
+from backend.app.services.llm import OllamaLLMProvider
 from backend.app.services.embeddings import OllamaEmbeddingProvider
 from backend.app.services.intent_router import IntentRouter, JevIntentClassifier
 from backend.app.services.lichess import LichessExplorerClient
@@ -54,6 +56,12 @@ def get_intent_router() -> IntentRouter:
     return IntentRouter(primary=primary, medium_confidence=settings.medium_confidence)
 
 
+def get_coach_service() -> Iterator[CoachService]:
+    settings = get_settings()
+    with OllamaLLMProvider(settings.llm) as provider:
+        yield LlmCoachService(provider=provider)
+
+
 @lru_cache
 def get_rag_service() -> RagService:
     settings = get_settings()
@@ -87,6 +95,7 @@ def analyze_position_endpoint(
     opening_tree: OpeningTree | None = Depends(get_opening_tree),
     intent_router: IntentRouter | None = Depends(get_intent_router),
     rag_service: RagService | None = Depends(get_rag_service),
+    coach_service: CoachService = Depends(get_coach_service),
 ) -> AnalyzePositionResponse:
     return analyze_position(
         request,
@@ -97,6 +106,7 @@ def analyze_position_endpoint(
         opening_tree,
         intent_router,
         rag_service,
+        coach_service,
     )
 
 
