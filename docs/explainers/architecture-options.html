@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="fr" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Options d'architecture agentique — POC FFE</title>
+<meta name="description" content="Aide à la décision : variantes agentiques (déterministe, hybride, tool calling, LangGraph), trade-off complexité / testabilité / pertinence." />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ink: '#0b1220',
+          panel: '#111a2e',
+          edge: '#1f2b45',
+          det: '#22c55e',
+          llm: '#a855f7',
+          warn: '#f59e0b',
+          bad: '#ef4444',
+          ok: '#38bdf8'
+        },
+        fontFamily: {
+          sans: ['Inter', 'system-ui', 'sans-serif'],
+          mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']
+        }
+      }
+    }
+  }
+</script>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    securityLevel: 'loose',
+    theme: 'base',
+    themeVariables: {
+      background: '#111a2e',
+      primaryColor: '#1f2b45',
+      primaryTextColor: '#e2e8f0',
+      primaryBorderColor: '#38bdf8',
+      lineColor: '#64748b',
+      secondaryColor: '#0b1220',
+      tertiaryColor: '#0b1220',
+      fontSize: '13px'
+    },
+    flowchart: { curve: 'basis', htmlLabels: true },
+    sequence: { actorMargin: 30, mirrorActors: false }
+  });
+</script>
+<style>
+  body { background: radial-gradient(1200px 800px at 80% -10%, #16233d 0%, #0b1220 55%); }
+  .glass { background: rgba(17,26,46,.72); backdrop-filter: blur(8px); border: 1px solid #1f2b45; }
+  .src { font-family: ui-monospace, monospace; font-size: .68rem; color: #7dd3fc; background: #0e1830; border: 1px solid #1f2b45; padding: .05rem .35rem; border-radius: .3rem; white-space: nowrap; }
+  .mermaid { background: #0e1730; border: 1px solid #1f2b45; border-radius: .75rem; padding: 1rem; overflow-x: auto; }
+  .bar { height: .55rem; border-radius: 999px; background: #1f2b45; overflow: hidden; }
+  .bar > span { display: block; height: 100%; border-radius: 999px; }
+  .score-dot { width: .7rem; height: .7rem; border-radius: 999px; display: inline-block; }
+  details > summary { cursor: pointer; list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details[open] .chev { transform: rotate(90deg); }
+  .chev { transition: transform .15s ease; }
+  .toc-link.active { color: #38bdf8; background: #0e1730; border-left-color: #38bdf8; }
+  .up::after { content: ' ▲'; color: #4ade80; font-size: .7em; }
+  .down::after { content: ' ▼'; color: #f87171; font-size: .7em; }
+  @media print {
+    aside { display: none !important; }
+    main { margin: 0 !important; max-width: 100% !important; }
+    details { display: block; }
+    details > div { display: block !important; }
+  }
+</style>
+</head>
+<body class="text-slate-200 font-sans antialiased">
+
+<!-- ======================= SIDEBAR ======================= -->
+<aside class="hidden lg:block fixed top-0 left-0 h-screen w-72 overflow-y-auto border-r border-edge bg-ink/80 backdrop-blur px-4 py-6">
+  <div class="text-xs uppercase tracking-widest text-slate-500 mb-1">POC FFE</div>
+  <h1 class="text-lg font-semibold text-white leading-tight mb-4">Options d'architecture agentique</h1>
+  <nav class="text-sm space-y-0.5">
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#intro">Mode d'emploi</a>
+    <div class="pt-3 pb-1 text-xs uppercase tracking-wider text-slate-500">A · Système IA produit</div>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#socle">A1 · Socle invariant</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#tools">A2 · Boîte à outils</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#strategies">A3 · Stratégies de retrieval</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#variantes">A4 · Les variantes historiques</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#passe-plat">A4b · Passe-plat vs minima</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#investigation">A4c · Investigation ReAct bornée</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#v2">A7 · Cible V2 : F révisé</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#matrice">A5 · Matrice comparative</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#reco">A6 · Recommandation produit</a>
+    <div class="pt-3 pb-1 text-xs uppercase tracking-wider text-slate-500">B · Documentation séparée</div>
+    <a class="block border-l-2 border-transparent px-3 py-1.5 rounded-r text-slate-400 hover:bg-panel" href="agent-workflow.html">Workflow des agents de développement ↗</a>
+    <div class="pt-3 pb-1 text-xs uppercase tracking-wider text-slate-500">C · Transverse</div>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#transverse">C1 · Où passe la frontière</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#ouvertes">C2 · Décisions ouvertes</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#sources">C3 · Annexe sources</a>
+  </nav>
+  <div class="mt-6 pt-4 border-t border-edge text-xs text-slate-500 leading-relaxed">
+    Non décisionnel tant qu'un ADR n'est pas pris. Les sources de vérité restent <span class="src">docs/</span> et <span class="src">docs/adr/</span>.
+  </div>
+</aside>
+
+<!-- ======================= MAIN ======================= -->
+<main class="lg:ml-72 max-w-5xl px-5 sm:px-8 py-10">
+
+  <!-- ===== INTRO ===== -->
+  <section id="intro" class="scroll-mt-20">
+    <div class="text-xs uppercase tracking-widest text-slate-500 mb-2">Aide à la décision · 2026</div>
+    <h1 class="text-3xl sm:text-4xl font-bold text-white leading-tight">Quelle version agentique pour le POC&nbsp;?</h1>
+    <p class="mt-4 text-slate-300 leading-relaxed">
+      Cette page recense <strong>toutes</strong> les architectures agentiques présentes dans la documentation du POC —
+      décidées, optionnelles, reportées ou écartées — pour le <strong>système IA produit</strong> (Partie A) et le
+      <strong>workflow des agents de développement</strong> (Partie B). Elle met en vis-à-vis les flux, les outils, la
+      frontière déterministe/LLM et notes le trade-off <strong>complexité · testabilité · pertinence</strong>.
+    </p>
+
+    <div class="mt-6 grid sm:grid-cols-3 gap-4">
+      <div class="glass rounded-xl p-4">
+        <div class="flex items-center gap-2 text-det font-semibold text-sm"><span class="score-dot" style="background:#22c55e"></span> Déterministe</div>
+        <p class="text-xs text-slate-400 mt-2">Règle, code, arbre, parse. Rejouable, testable sans Ollama, traçable.</p>
+      </div>
+      <div class="glass rounded-xl p-4">
+        <div class="flex items-center gap-2 text-llm font-semibold text-sm"><span class="score-dot" style="background:#a855f7"></span> LLM / probabiliste</div>
+        <p class="text-xs text-slate-400 mt-2">Classification, reformulation, sélection. Variable, à valider et fallbacker.</p>
+      </div>
+      <div class="glass rounded-xl p-4">
+        <div class="flex items-center gap-2 text-warn font-semibold text-sm"><span class="score-dot" style="background:#f59e0b"></span> Badges de statut</div>
+        <p class="text-xs text-slate-400 mt-2">Décidé · Optionnel · Reporté · Écarté — et force de recommandation.</p>
+      </div>
+    </div>
+
+    <div class="mt-6 glass rounded-xl p-4 text-sm text-slate-300">
+      <strong class="text-white">Règle de lecture.</strong> Pour chaque métrique de la matrice A5, la flèche indique le sens favorable :
+      <span class="text-emerald-400">▲ = plus haut = mieux</span> (testabilité, pertinence, latence, traçabilité, conformité ADR) et
+      <span class="text-rose-400">▼ = plus bas = mieux</span> (complexité). Aucune affirmation sans référence <span class="src">fichier:ligne</span>.
+    </div>
+
+    <div class="mt-4 rounded-xl border border-warn/40 bg-warn/10 p-4 text-sm text-amber-200">
+      <strong>Point dur de la doc.</strong>
+      « L'utilisation de LangChain ou LangGraph ne rend pas automatiquement le produit agentique. Un graphe dont le chemin est
+      entièrement écrit à l'avance reste principalement un workflow déterministe. »
+      <span class="src">IMPROVEMENT.md:127</span>
+    </div>
+  </section>
+
+  <!-- ================= PARTIE A ================= -->
+  <div class="mt-16 border-t border-edge pt-6">
+    <h2 class="text-2xl font-bold text-white">Partie A · Système IA produit</h2>
+    <p class="text-slate-400 text-sm mt-1">LangGraph/LangChain, retrieval, coach, routage d'intention.</p>
+  </div>
+
+  <!-- ===== A1 SOCLE ===== -->
+  <section id="socle" class="scroll-mt-20 mt-10">
+    <h3 class="text-xl font-semibold text-white">A1 · Socle invariant</h3>
+    <p class="text-slate-300 mt-3 text-sm leading-relaxed">
+      Ces éléments ne dépendent pas du choix d'architecture : ils contraignent toutes les variantes.
+    </p>
+
+    <div class="mt-4 grid md:grid-cols-2 gap-4">
+      <div class="glass rounded-xl p-4">
+        <h4 class="font-semibold text-ok text-sm">Technologies non négociables</h4>
+        <ul class="mt-2 text-sm text-slate-300 space-y-1 list-disc list-inside">
+          <li>Angular, FastAPI, Docker Compose</li>
+          <li>Stockfish (moteur), Lichess API, YouTube API</li>
+          <li>MongoDB (app), Milvus (vecteurs)</li>
+          <li><strong>LangGraph pour l'orchestration agentique</strong></li>
+        </ul>
+        <p class="text-xs text-slate-500 mt-3">Un fallback n'est autorisé que s'il est documenté (ADR / ARCHITECTURE) avec sa condition d'activation.</p>
+        <p class="mt-2"><span class="src">AGENT_CONTEXT.md:26-40</span> <span class="src">adr/0002:5</span></p>
+      </div>
+
+      <div class="glass rounded-xl p-4">
+        <h4 class="font-semibold text-ok text-sm">Seams et testabilité</h4>
+        <ul class="mt-2 text-sm text-slate-300 space-y-1 list-disc list-inside">
+          <li><code>RagService</code> / <code>CoachService</code> : ne doivent <strong>pas</strong> importer <code>langgraph</code></li>
+          <li><code>LLMProvider.generate_stream</code> : injectable, mockable sans Ollama</li>
+          <li>Services impératifs d'abord, « LangGraph orchestre ensuite des services déjà stabilisés »</li>
+        </ul>
+        <p class="mt-2"><span class="src">ARCHITECTURE.md:163-165</span> <span class="src">adr/0006:178-180</span> <span class="src">adr/0007:31-32</span></p>
+      </div>
+
+      <div class="glass rounded-xl p-4">
+        <h4 class="font-semibold text-ok text-sm">Répartition des responsabilités</h4>
+        <table class="mt-2 w-full text-xs">
+          <tbody class="divide-y divide-edge">
+            <tr><td class="py-1 pr-2 font-semibold text-slate-200">Stockfish</td><td class="py-1 text-slate-400">validité tactique, éval, candidats, lignes</td></tr>
+            <tr><td class="py-1 pr-2 font-semibold text-slate-200">Lichess</td><td class="py-1 text-slate-400">coups joués, fréquence, résultats, préférences humaines</td></tr>
+            <tr><td class="py-1 pr-2 font-semibold text-slate-200">RAG</td><td class="py-1 text-slate-400">pourquoi, plan, concept, structure, erreurs</td></tr>
+            <tr><td class="py-1 pr-2 font-semibold text-slate-200">LangGraph</td><td class="py-1 text-slate-400">orchestration, choix de stratégie, combinaison, décision de retrieval</td></tr>
+          </tbody>
+        </table>
+        <p class="mt-2"><span class="src">wikichess…:189-220</span></p>
+      </div>
+
+      <div class="glass rounded-xl p-4">
+        <h4 class="font-semibold text-ok text-sm">Politique de fallback (produit)</h4>
+        <table class="mt-2 w-full text-xs">
+          <tbody class="divide-y divide-edge">
+            <tr><td class="py-1 pr-2">YouTube</td><td class="py-1 text-slate-400">lien de recherche pré-rempli</td></tr>
+            <tr><td class="py-1 pr-2">Lichess</td><td class="py-1 text-slate-400">seed / cache MongoDB</td></tr>
+            <tr><td class="py-1 pr-2">Milvus</td><td class="py-1 text-slate-400">collection seedée ou RAG vide explicite</td></tr>
+            <tr><td class="py-1 pr-2">Coach LLM</td><td class="py-1 text-slate-400"><code>ConservativeCoachService</code> déterministe + labels</td></tr>
+            <tr><td class="py-1 pr-2">Embeddings</td><td class="py-1 text-slate-400">modèle local plus léger</td></tr>
+          </tbody>
+        </table>
+        <p class="mt-2"><span class="src">ARCHITECTURE.md:179-189</span> <span class="src">adr/0007:25</span></p>
+      </div>
+    </div>
+
+    <div class="mt-4 glass rounded-xl p-4">
+      <h4 class="font-semibold text-white text-sm mb-2">Vocabulaire imposé (GLOSSARY)</h4>
+      <div class="flex flex-wrap gap-2 text-xs">
+        <span class="src">Agent d'ouvertures</span><span class="src">Sortie de théorie</span><span class="src">Contexte pédagogique</span>
+        <span class="src">Coach IA</span><span class="src">Donnée structurée d'ouverture</span><span class="src">Retrieval</span>
+        <span class="src">Attribution de source</span><span class="src">Niveau pédagogique</span>
+      </div>
+      <p class="mt-2 text-xs text-slate-500">« Coach IA » évite explicitement « LLM seul, agent libre ». <span class="src">GLOSSARY.md:43-45</span></p>
+    </div>
+  </section>
+
+  <!-- ===== A2 TOOLS ===== -->
+  <section id="tools" class="scroll-mt-20 mt-12">
+    <h3 class="text-xl font-semibold text-white">A2 · Boîte à outils</h3>
+    <p class="text-slate-300 mt-3 text-sm leading-relaxed">
+      Catalogue des outils mobilisables par les variantes. Chaque outil est un module à interface étroite, appelable
+      hors LLM, donc testable seul.
+    </p>
+
+    <div class="mt-4 overflow-x-auto glass rounded-xl">
+      <table class="w-full text-sm">
+        <thead class="text-left text-slate-400 text-xs uppercase tracking-wider">
+          <tr class="border-b border-edge">
+            <th class="px-4 py-3">Outil</th>
+            <th class="px-4 py-3">Entrée</th>
+            <th class="px-4 py-3">Sortie</th>
+            <th class="px-4 py-3">Nature</th>
+            <th class="px-4 py-3">Source</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-edge text-slate-300">
+          <tr><td class="px-4 py-3 font-mono text-ok">validate_position</td><td class="px-4 py-3">FEN / PGN / coups</td><td class="px-4 py-3">position normalisée + légalité</td><td class="px-4 py-3"><span class="text-det">déterministe</span></td><td class="px-4 py-3"><span class="src">wikichess…:417</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-ok">identify_opening</td><td class="px-4 py-3">coups</td><td class="px-4 py-3">ECO, nom, ligne, confiance, alternates</td><td class="px-4 py-3"><span class="text-det">déterministe</span></td><td class="px-4 py-3"><span class="src">chess-openings-in-rag:84</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-ok">search_opening_tree</td><td class="px-4 py-3">coups</td><td class="px-4 py-3">path, explore (coups légaux nommés), compare, coverage</td><td class="px-4 py-3"><span class="text-det">déterministe</span></td><td class="px-4 py-3"><span class="src">chess-openings-in-rag:82-92</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-ok">get_lichess_stats</td><td class="px-4 py-3">FEN</td><td class="px-4 py-3">coups joués, fréquence, résultats, par Elo</td><td class="px-4 py-3"><span class="text-det">externe</span></td><td class="px-4 py-3"><span class="src">wikichess…:198-204</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-ok">evaluate_stockfish</td><td class="px-4 py-3">FEN, depth/movetime, MultiPV</td><td class="px-4 py-3">bestmove, cp/mate, pv, wdl</td><td class="px-4 py-3"><span class="text-det">externe</span></td><td class="px-4 py-3"><span class="src">IMPROVEMENT.md:30-59</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-llm">search_opening_context</td><td class="px-4 py-3">requête(s) + filtres + boost</td><td class="px-4 py-3">chunks prose sourcés (Milvus)</td><td class="px-4 py-3"><span class="text-llm">sémantique</span></td><td class="px-4 py-3"><span class="src">wikichess…:421-460</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-llm">search_videos</td><td class="px-4 py-3">query</td><td class="px-4 py-3">vidéos ou fallback recherche</td><td class="px-4 py-3"><span class="text-det">externe</span></td><td class="px-4 py-3"><span class="src">ARCHITECTURE.md:181</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-ok">reranker</td><td class="px-4 py-3">15 candidats</td><td class="px-4 py-3">3–5 meilleurs (anti-redondance)</td><td class="px-4 py-3"><span class="text-det">scoring</span></td><td class="px-4 py-3"><span class="src">wikichess…:638-661</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-ok">evidence_aggregator</td><td class="px-4 py-3">engine + lichess + rag</td><td class="px-4 py-3">preuves structurées par coup candidat</td><td class="px-4 py-3"><span class="text-det">déterministe</span></td><td class="px-4 py-3"><span class="src">wikichess…:665-688</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-llm">coach_generator</td><td class="px-4 py-3">preuves + niveau + question</td><td class="px-4 py-3">explication pédagogique</td><td class="px-4 py-3"><span class="text-llm">LLM contraint</span></td><td class="px-4 py-3"><span class="src">wikichess…:692-707</span>, <span class="src">adr/0007:15</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-ok">consistency_checker</td><td class="px-4 py-3">réponse + faits</td><td class="px-4 py-3">valide / correction (coup existe, côté au trait, contradiction)</td><td class="px-4 py-3"><span class="text-det">déterministe</span></td><td class="px-4 py-3"><span class="src">wikichess…:711-739</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-llm">intent_router</td><td class="px-4 py-3">question + état structuré</td><td class="px-4 py-3">intention typée + probabilités + confidence</td><td class="px-4 py-3"><span class="text-llm">classifieur</span></td><td class="px-4 py-3"><span class="src">IMPROVEMENT.md:355-412</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-llm">investigate_position</td><td class="px-4 py-3">question + niveau + intention + contexte</td><td class="px-4 py-3">InvestigationContext sourcé : lignes, piège, plan futur, outils utilisés</td><td class="px-4 py-3"><span class="text-llm">ReAct borné</span></td><td class="px-4 py-3"><span class="src">adr/0010</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono text-ok">phase_router</td><td class="px-4 py-3">signaux position + question</td><td class="px-4 py-3">opening / transition / autre + use_*</td><td class="px-4 py-3"><span class="text-llm">classifieur</span></td><td class="px-4 py-3"><span class="src">IMPROVEMENT.md:270-302</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===== A3 STRATEGIES ===== -->
+  <section id="strategies" class="scroll-mt-20 mt-12">
+    <h3 class="text-xl font-semibold text-white">A3 · Stratégies de retrieval</h3>
+    <p class="text-slate-300 mt-3 text-sm leading-relaxed">
+      Le Retrieval Planner est « le cœur décisionnel ». Il choisit une stratégie puis le moteur de retrieval reste déterministe.
+      <span class="src">wikichess…:421-462</span>
+    </p>
+
+    <div class="mt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      <div class="glass rounded-xl p-4"><div class="text-ok font-semibold text-sm">A · Exact metadata</div><p class="text-xs text-slate-400 mt-1">Demande très précise (« Pourquoi 6.Be3 dans la Najdorf ? »). Filtres stricts.</p><p class="mt-2"><span class="src">:319</span></p></div>
+      <div class="glass rounded-xl p-4"><div class="text-ok font-semibold text-sm">B · Metadata + semantic</div><p class="text-xs text-slate-400 mt-1">« Probablement le mode par défaut » : filtre ouverture + recherche sémantique.</p><p class="mt-2"><span class="src">:336</span></p></div>
+      <div class="glass rounded-xl p-4"><div class="text-ok font-semibold text-sm">C · Semantic only</div><p class="text-xs text-slate-400 mt-1">Questions générales (« qu'est-ce qu'un mauvais fou ? »). L'ouverture importe peu.</p><p class="mt-2"><span class="src">:359</span></p></div>
+      <div class="glass rounded-xl p-4"><div class="text-ok font-semibold text-sm">D · Structure-first</div><p class="text-xs text-slate-400 mt-1">Structures de pions (Carlsbad, IQP, Hanging Pawns, Maroczy, Hedgehog).</p><p class="mt-2"><span class="src">:369</span></p></div>
+      <div class="glass rounded-xl p-4"><div class="text-ok font-semibold text-sm">E · Candidate move</div><p class="text-xs text-slate-400 mt-1">« Que jouer ici ? » : Stockfish candidats + fréquence Lichess + prose par coup.</p><p class="mt-2"><span class="src">:393</span></p></div>
+      <div class="glass rounded-xl p-4"><div class="text-ok font-semibold text-sm">F · No retrieval</div><p class="text-xs text-slate-400 mt-1">Pouvoir ne rien chercher si l'info est déjà dans le state.</p><p class="mt-2"><span class="src">:409</span></p></div>
+    </div>
+
+    <div class="mt-4 glass rounded-xl p-4">
+      <h4 class="font-semibold text-white text-sm mb-2">Hybrid retrieval — score composite <span class="src">wikichess…:564-593</span></h4>
+      <pre class="text-xs text-emerald-300 bg-ink rounded-lg p-3 overflow-x-auto">final_score =
+    semantic_similarity  (0.40)
+  + opening_match        (0.20)
+  + structure_match      (0.15)
+  + move_match           (0.10)
+  + source_quality       (0.10)
+  + difficulty_match     (0.05)</pre>
+      <p class="text-xs text-slate-400 mt-2">« Le ranking ne devrait pas être fondé uniquement sur la similarité vectorielle. » Les poids varient selon l'intention.</p>
+    </div>
+
+    <div class="mt-4 glass rounded-xl p-4">
+      <h4 class="font-semibold text-white text-sm mb-2">Ce qui n'est pas confié au vector store</h4>
+      <p class="text-sm text-slate-300">Le vector store n'est pas une autorité sur « quel coup est objectivement correct ». Préférer « l'idée stratégique de …c5 est d'attaquer la base » à « le meilleur coup est …c5 ». <span class="src">wikichess…:177-188</span></p>
+    </div>
+  </section>
+
+  <!-- ===== A4 VARIANTES ===== -->
+  <section id="variantes" class="scroll-mt-20 mt-12">
+    <h3 class="text-xl font-semibold text-white">A4 · Les variantes historiques</h3>
+    <p class="text-slate-300 mt-3 mb-5 text-sm leading-relaxed">
+      Chaque fiche donne : le flux, les outils, la <strong>frontière déterministe/LLM</strong>, la testabilité (ce qui reste
+      vert sans Ollama), et le statut ADR. Badges :
+      <span class="inline-block text-[.65rem] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">Décidé</span>
+      <span class="inline-block text-[.65rem] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/40">Optionnel</span>
+      <span class="inline-block text-[.65rem] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">Reporté</span>
+      <span class="inline-block text-[.65rem] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40">Écarté</span>
+      <span class="inline-block text-[.65rem] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">Recommandé</span>
+      <span class="inline-block text-[.65rem] px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/40">À explorer</span>
+      <span class="inline-block text-[.65rem] px-2 py-0.5 rounded-full bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40">Spéculatif</span>
+    </p>
+
+    <!-- H -->
+    <details class="glass rounded-xl mb-4" open>
+      <summary class="px-5 py-4 flex items-center gap-3">
+        <span class="chev text-slate-500">▶</span>
+        <span class="text-xs font-mono text-slate-500">H</span>
+        <span class="font-semibold text-white">Implémenté aujourd'hui — conditionnel + LLM coach + fallback</span>
+        <span class="ml-auto text-[.65rem] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">Décidé</span>
+      </summary>
+      <div class="px-5 pb-5 border-t border-edge pt-4">
+        <pre class="mermaid">flowchart TD
+  S([START]) --> V[validation FEN]
+  V --> O[identification ouverture]
+  O --> R{"in_theory ?"}
+  R -- oui --> L[Lichess]
+  R -- non --> SF[Stockfish]
+  L --> RAG[retrieval RAG]
+  SF --> RAG
+  RAG --> VID[vidéos / fallback]
+  VID --> C["LlmCoachService (LLM contraint)"]
+  C -->|Ollama KO| CC["ConservativeCoachService\ntemplate déterministe"]
+  C --> E([END])
+  CC --> E
+  classDef det fill:#0e3a22,stroke:#22c55e,color:#d1fae5;
+  classDef llm fill:#3b1d5e,stroke:#a855f7,color:#f3e8ff;
+  class V,O,R,L,SF,RAG,VID,CC det;
+  class C llm;</pre>
+        <div class="grid md:grid-cols-2 gap-4 mt-4 text-sm">
+          <div>
+            <p class="text-slate-300"><strong class="text-white">Décision critique</strong> : <code>if in_theory: use_lichess() else: use_stockfish()</code> — « workflow conditionnel fiable, mais pas un agent autonome avec sélection dynamique d'outils ».</p>
+            <p class="mt-2"><span class="src">IMPROVEMENT.md:129-151</span></p>
+          </div>
+          <div>
+            <p class="text-slate-300"><strong class="text-white">Déjà en place</strong> : <code>AnalysisRun</code> séparé du rendu, endpoints progressifs idempotents, streaming SSE, fallback template déterministe.</p>
+            <p class="mt-2"><span class="src">adr/0007:15-32</span></p>
+          </div>
+        </div>
+        <div class="mt-3 text-xs"><span class="text-det font-semibold">Frontière :</span> sélection d'outils = déterministe (code) — rédaction = LLM contraint + fallback.</div>
+      </div>
+    </details>
+
+    <!-- A -->
+    <details class="glass rounded-xl mb-4">
+      <summary class="px-5 py-4 flex items-center gap-3">
+        <span class="chev text-slate-500">▶</span>
+        <span class="text-xs font-mono text-slate-500">A</span>
+        <span class="font-semibold text-white">Workflow déterministe</span>
+        <span class="ml-auto text-[.65rem] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/40">Optionnel</span>
+      </summary>
+      <div class="px-5 pb-5 border-t border-edge pt-4">
+        <pre class="mermaid">flowchart LR
+  FEN --> L[Lichess] --> SF["Stockfish\nsi sortie de théorie"] --> RAG --> LLM["LLM de synthèse"]
+  classDef det fill:#0e3a22,stroke:#22c55e,color:#d1fae5;
+  classDef llm fill:#3b1d5e,stroke:#a855f7,color:#f3e8ff;
+  class FEN,L,SF,RAG det;
+  class LLM llm;</pre>
+        <div class="grid md:grid-cols-2 gap-4 mt-4 text-sm">
+          <div>
+            <p class="text-emerald-300 font-semibold text-xs uppercase">Pour</p>
+            <p class="text-slate-300">Très prévisible, facile à tester et à expliquer, temps maîtrisable. Bon pour les décisions de sécurité et la validation des coups.</p>
+            <p class="mt-2"><span class="src">IMPROVEMENT.md:157-177</span></p>
+          </div>
+          <div>
+            <p class="text-rose-300 font-semibold text-xs uppercase">Limite</p>
+            <p class="text-slate-300">« Le LLM ne choisit pas réellement les outils. » Pas d'agentivité réelle.</p>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <!-- B -->
+    <details class="glass rounded-xl mb-4">
+      <summary class="px-5 py-4 flex items-center gap-3">
+        <span class="chev text-slate-500">▶</span>
+        <span class="text-xs font-mono text-slate-500">B</span>
+         <span class="font-semibold text-white">Collecte globale puis sélection LLM</span>
+         <span class="ml-auto flex gap-1"><span class="text-[.65rem] px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-400 border border-slate-500/40">Écarté V1</span></span>
+      </summary>
+      <div class="px-5 pb-5 border-t border-edge pt-4">
+        <pre class="mermaid">flowchart TD
+  Q["FEN + question"] --> P1[Lichess]
+  Q --> P2[Stockfish]
+  Q --> P3[RAG]
+  Q --> P4[vidéos]
+  P1 --> OBJ["objet structuré"]
+  P2 --> OBJ
+  P3 --> OBJ
+  P4 --> OBJ
+  OBJ --> LLM["LLM routeur + coach"]
+  classDef det fill:#0e3a22,stroke:#22c55e,color:#d1fae5;
+  classDef llm fill:#3b1d5e,stroke:#a855f7,color:#f3e8ff;
+  class Q,P1,P2,P3,P4,OBJ det;
+  class LLM llm;</pre>
+        <div class="grid md:grid-cols-2 gap-4 mt-4 text-sm">
+          <div>
+             <p class="text-slate-300">Cette variante collecte avant de décider. Elle peut convenir à une question très ouverte, mais paie Stockfish, Lichess et RAG même lorsque l'intention n'en a pas besoin.</p>
+             <p class="mt-2">Elle n'est pas le chemin V1 : le flux applicatif charge les familles à la demande et le plan E sélectionne les buckets avant le retrieval. <span class="src">ARCHITECTURE.md:59-63</span></p>
+          </div>
+          <div>
+            <p class="text-det font-semibold text-xs uppercase">Frontière</p>
+             <p class="text-slate-300">Collecte = déterministe parallèle ; le routage et la rédaction dans un même appel LLM réduisent la testabilité du plan critique.</p>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <!-- C -->
+    <details class="glass rounded-xl mb-4">
+      <summary class="px-5 py-4 flex items-center gap-3">
+        <span class="chev text-slate-500">▶</span>
+        <span class="text-xs font-mono text-slate-500">C</span>
+        <span class="font-semibold text-white">Tool calling dynamique (boucle ReAct)</span>
+        <span class="ml-auto text-[.65rem] px-2 py-0.5 rounded-full bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40">Spéculatif</span>
+      </summary>
+      <div class="px-5 pb-5 border-t border-edge pt-4">
+        <pre class="mermaid">flowchart TD
+  Q["Question + FEN"] --> LLM([LLM])
+  LLM --> T1["get_lichess_stats"]
+  LLM --> T2["evaluate_stockfish"]
+  LLM --> T3["search_opening_context"]
+  LLM --> T4["search_videos"]
+  T1 --> OBS[observations]
+  T2 --> OBS
+  T3 --> OBS
+  T4 --> OBS
+  OBS -->|nouvelle décision| LLM
+  LLM --> REP([réponse sourcée])
+  classDef llm fill:#3b1d5e,stroke:#a855f7,color:#f3e8ff;
+  class LLM llm;</pre>
+        <div class="grid md:grid-cols-2 gap-4 mt-4 text-sm">
+          <div>
+            <p class="text-emerald-300 font-semibold text-xs uppercase">Pour</p>
+            <p class="text-slate-300">Sélection d'outils réellement dynamique, trajectoire non prédéfinie. Préférable si les questions utilisateurs sont très variées.</p>
+          </div>
+          <div>
+            <p class="text-rose-300 font-semibold text-xs uppercase">Contre</p>
+            <p class="text-slate-300">Plus lent, plus difficile à tester et à contrôler, potentiellement plus coûteux. <span class="src">IMPROVEMENT.md:233-268</span></p>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <!-- D -->
+    <details class="glass rounded-xl mb-4">
+      <summary class="px-5 py-4 flex items-center gap-3">
+        <span class="chev text-slate-500">▶</span>
+        <span class="text-xs font-mono text-slate-500">D</span>
+         <span class="font-semibold text-white">Routeur de phase de jeu</span>
+         <span class="ml-auto text-[.65rem] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/40">À fusionner avec E</span>
+      </summary>
+      <div class="px-5 pb-5 border-t border-edge pt-4">
+        <pre class="mermaid">flowchart TD
+  SIG["signaux : numéro de coup, pièces,\ndames, roques, structure,\nouverture, couverture Lichess, question"] --> R([routeur de phase])
+  R --> OUT["{phase, confidence, reason,\nuse_lichess, use_stockfish, use_rag}"]
+  classDef det fill:#0e3a22,stroke:#22c55e,color:#d1fae5;
+  classDef llm fill:#3b1d5e,stroke:#a855f7,color:#f3e8ff;
+  class SIG det; class OUT det; class R llm;</pre>
+        <p class="text-sm text-slate-300 mt-4">Le LLM détermine ouverture / transition / milieu / finale sans règle rigide sur le numéro de coup. Préférer une phase <code>transition</code> à une classification stricte. La couverture Lichess reste un signal fort de sortie de théorie.</p>
+        <p class="mt-2"><span class="src">IMPROVEMENT.md:270-302</span></p>
+      </div>
+    </details>
+
+    <!-- E -->
+    <details class="glass rounded-xl mb-4">
+      <summary class="px-5 py-4 flex items-center gap-3">
+        <span class="chev text-slate-500">▶</span>
+        <span class="text-xs font-mono text-slate-500">E</span>
+         <span class="font-semibold text-white">Classifieur typé intent + phase + plan déterministe</span>
+         <span class="ml-auto flex gap-1"><span class="text-[.65rem] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">Spine V1</span><span class="text-[.65rem] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">JEV non adopté</span></span>
+      </summary>
+      <div class="px-5 pb-5 border-t border-edge pt-4">
+        <pre class="mermaid">flowchart TD
+  Q["Question + état structuré"] --> IR{"IntentRouter"}
+  IR -- "JEV/System One\nsi disponible/valide" --> PLAN
+  IR -- "fallback rule-based" --> PLAN
+  PLAN["RetrievalPlan\n(construit par le code)"] --> TOOLS[outils de retrieval]
+  TOOLS --> COACH["LLM coach\nsynthèse sourcée"]
+  classDef det fill:#0e3a22,stroke:#22c55e,color:#d1fae5;
+  classDef llm fill:#3b1d5e,stroke:#a855f7,color:#f3e8ff;
+  class PLAN,TOOLS det; class IR,COACH llm;</pre>
+        <div class="grid md:grid-cols-2 gap-4 mt-4 text-sm">
+          <div>
+             <p class="text-slate-300">Un seul classifieur retourne <code>{intent, phase, confidence}</code>. Le code construit ensuite le <code>RetrievalPlan</code> ; le LLM ne choisit pas les sources critiques. JEV/System One est un endpoint TypeSafe externe de décision structurée, pas un générateur de texte.</p>
+             <p class="mt-2">Le A/B existant ne justifie pas JEV aujourd'hui : 20 cas Eval V2, coach usable 0.65 JEV contre 0.80 déterministe, false current line 0.20 contre 0.00. <span class="src">experiments/rag/eval_v2/runs/ab</span></p>
+          </div>
+          <div>
+            <p class="text-det font-semibold text-xs uppercase">Politique de confidence <span class="src">:401-410</span></p>
+            <ul class="text-slate-300 mt-1 space-y-1">
+              <li>haute → appliquer le plan</li>
+              <li>moyenne → plan avec budget enfant serré</li>
+              <li>basse / routeur absent → arbre + prose du nœud courant</li>
+            </ul>
+            <p class="mt-2 text-slate-300">Contraintes codées en dur : enfants directs seulement, descendants profonds exclus, prose enfant conditionnelle, Stockfish prioritaire, aucune affirmation non sourcée.</p>
+          </div>
+        </div>
+        <div class="mt-3 rounded-lg border border-warn/40 bg-warn/10 p-3 text-xs text-amber-200">
+           JEV/System-One est une <strong>dépendance externe mesurée mais non adoptée</strong> : la baseline rule-based reste meilleure sur le run A/B actuel. Un set plus large pourra rouvrir la décision. <span class="src">ARCHITECTURE.md:171</span> · <span class="src">RAG-RUNBOOK.md:219-220</span>
+        </div>
+      </div>
+    </details>
+
+    <!-- F -->
+    <details class="glass rounded-xl mb-4">
+      <summary class="px-5 py-4 flex items-center gap-3">
+        <span class="chev text-slate-500">▶</span>
+        <span class="text-xs font-mono text-slate-500">F</span>
+         <span class="font-semibold text-white">LangGraph Retrieval Planner complet (cible V2)</span>
+         <span class="ml-auto flex gap-1"><span class="text-[.65rem] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">Reporté V1</span></span>
+      </summary>
+      <div class="px-5 pb-5 border-t border-edge pt-4">
+        <pre class="mermaid">flowchart TD
+  START([START]) --> A[load_position_context]
+  A --> B[get_lichess_context]
+  B --> C[get_stockfish_context]
+  C --> D[load_player_profile]
+  D --> E[analyze_user_intent]
+  E --> F["retrieval_planner"]
+  F --> G1[no_retrieval]
+  F --> G2[exact_metadata_search]
+  F --> G3[metadata_semantic_search]
+  F --> G4[semantic_search]
+  F --> G5[structure_search]
+  F --> G6[candidate_move_search]
+  G1 --> H[retrieval_execution]
+  G2 --> H
+  G3 --> H
+  G4 --> H
+  G5 --> H
+  G6 --> H
+  H --> I[reranker]
+  I --> J[evidence_aggregator]
+  J --> K[coach_generator]
+  K --> L{consistency_checker}
+  L -- valid --> RES([RESPONSE])
+  L -- issue --> M[correction] --> RES</pre>
+        <div class="grid md:grid-cols-2 gap-4 mt-4 text-sm">
+          <div>
+             <p class="text-slate-300">Architecture cible V2 : jointure parallèle, modes de retrieval justifiés par le corpus, tri bucket puis cosine, EvidencePack et ClaimVerifier. La section A7 porte la version révisée. <span class="src">wikichess…:743-837</span> <span class="src">adr/0011</span></p>
+          </div>
+          <div>
+            <p class="text-rose-300 font-semibold text-xs uppercase">Conflit ADR</p>
+             <p class="text-slate-300">ADR 0009 est maintenant acceptée : LangGraph orchestre un module mince, les services restent impératifs et le graphe désactivable. <code>RagService</code>/<code>CoachService</code> n'importent pas <code>langgraph</code>. <span class="src">adr/0009:3,28-45</span></p>
+          </div>
+        </div>
+        <div class="mt-3 rounded-lg border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-sky-200">
+          <strong>Anti-pattern écarté.</strong> Éviter plusieurs agents (Stockfish Agent, Lichess Agent, Opening Agent, RAG Agent, Strategy Agent, Coach Agent, Verifier Agent) : « probablement trop complexe ». <span class="src">wikichess…:805-837</span>
+        </div>
+      </div>
+    </details>
+
+    <!-- G -->
+    <details class="glass rounded-xl mb-4">
+      <summary class="px-5 py-4 flex items-center gap-3">
+        <span class="chev text-slate-500">▶</span>
+        <span class="text-xs font-mono text-slate-500">G</span>
+        <span class="font-semibold text-white">MVP agentique conseillé</span>
+        <span class="ml-auto text-[.65rem] px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/40">À explorer</span>
+      </summary>
+      <div class="px-5 pb-5 border-t border-edge pt-4">
+        <pre class="mermaid">flowchart TD
+  R[LangGraph Router] --> S1[metadata semantic]
+  R --> S2[semantic only]
+  R --> S3[candidate moves]
+  S1 --> RR[reranking]
+  S2 --> RR
+  S3 --> RR
+  RR --> CO[coach]</pre>
+        <p class="text-sm text-slate-300 mt-4">Version réduite de F, à introduire progressivement : router + 3 stratégies + reranking + coach. Correspond au palier intermédiaire de la trajectoire ADR 0006.</p>
+        <p class="mt-2"><span class="src">wikichess…:973-987</span> <span class="src">adr/0006:178-179</span></p>
+      </div>
+    </details>
+
+    <!-- A4b PASSE-PLAT -->
+    <div class="mt-8 rounded-2xl border border-cyan-500/40 bg-cyan-500/5 p-5" id="passe-plat">
+      <h4 class="text-lg font-semibold text-white">A4b · LangGraph « passe-plat » vs minima agentiques</h4>
+      <p class="text-slate-300 mt-3 text-sm leading-relaxed">
+        Si l'objectif est de <strong>livrer en satisfaisant la techno LangGraph</strong> sans changer le
+        comportement produit, la question est : un graphe où chaque nœud enveloppe un appel existant
+        suffit-il ? Oui — mais il faut décider <em>combien</em> de vraie décision garder pour ne pas
+        livrer une façade creuse.
+      </p>
+
+      <pre class="mermaid mt-4">flowchart TD
+  S([START]) --> N1["noeud: validate_position\n-> service"]
+  N1 --> N2["noeud: identify_opening\n-> service"]
+  N2 --> N3["noeud: fetch_lichess_stats\n-> service"]
+  N3 --> N4["noeud: retrieve_rag_context\n-> service"]
+  N4 --> N5["noeud: maybe_run_stockfish\n-> service"]
+  N5 --> N6["noeud: fetch_youtube_videos\n-> service"]
+  N6 --> N7["noeud: generate_coach_answer\n-> service"]
+  N7 --> E([END])
+  classDef thin fill:#0e3a22,stroke:#22c55e,color:#d1fae5;
+  classDef dec fill:#3b1d5e,stroke:#a855f7,color:#f3e8ff;
+  class N1,N2,N3,N4,N5,N6,N7 thin;
+  class S,E dec;</pre>
+      <p class="text-xs text-slate-500 mt-2">DAG passe-plat : chaque nœud délègue à un service déjà stabilisé, aucune logique métier dans le graphe. <span class="src">ARCHITECTURE.md:151-163</span></p>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-5">
+        <div class="glass rounded-xl p-4 border-t-2 border-slate-500">
+          <div class="flex items-center gap-2"><span class="text-[.65rem] px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/40">Suffisant pour livrer</span></div>
+          <h5 class="font-semibold text-white text-sm mt-2">Passe-plat (DAG fixe)</h5>
+          <ul class="mt-2 text-sm text-slate-300 space-y-1 list-disc list-inside">
+            <li>Comportement produit <strong>inchangé</strong></li>
+            <li>Satisfait la techno non négociable (ADR 0002)</li>
+            <li>Testabilité et traçabilité maximales</li>
+            <li>Latence et coût identiques</li>
+          </ul>
+          <p class="text-xs text-rose-300 mt-2">Limite : reste un workflow déterministe, pas un agent. <span class="src">IMPROVEMENT.md:127</span></p>
+        </div>
+        <div class="glass rounded-xl p-4 border-t-2 border-cyan-500">
+          <div class="flex items-center gap-2"><span class="text-[.65rem] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">Recommandé</span></div>
+          <h5 class="font-semibold text-white text-sm mt-2">Passe-plat + minima agentiques</h5>
+          <ul class="mt-2 text-sm text-slate-300 space-y-1 list-disc list-inside">
+            <li>1–2 points de décision conditionnels réels :</li>
+            <li class="list-none pl-5">· routeur d'intention/phase → <code>retrieval_plan</code> construit par le code</li>
+            <li class="list-none pl-5">· <code>in_theory</code> → Lichess vs Stockfish</li>
+            <li>Coût quasi nul, comportement préservé</li>
+            <li>Donne de quoi défendre le mot « agentique »</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-4">
+        <div class="glass rounded-xl p-4 text-sm">
+          <h5 class="font-semibold text-emerald-300 text-sm">Ce que le graphe apporte vraiment</h5>
+          <p class="text-slate-300 mt-1">État explicite, arêtes conditionnelles, retries/fallbacks, checkpointing, streaming par nœud, et un point d'extension vers G/F sans réécriture. Plomberie, pas agentivité.</p>
+        </div>
+        <div class="glass rounded-xl p-4 text-sm">
+          <h5 class="font-semibold text-rose-300 text-sm">Ce qu'il n'apporte pas</h5>
+          <p class="text-slate-300 mt-1">Aucune sélection dynamique d'outils, aucune trajectoire non prédéfinie. Ne pas revendiquer un agent autonome.</p>
+        </div>
+      </div>
+
+      <div class="mt-4 glass rounded-xl p-4">
+        <h5 class="font-semibold text-white text-sm mb-2">Règles de survie</h5>
+        <ul class="text-sm text-slate-300 space-y-1 list-disc list-inside">
+          <li><strong>Nœuds minces</strong> : un nœud appelle un service, jamais une API/Milvus/Mongo/Stockfish directement.</li>
+          <li><strong>Services hors LangGraph</strong> : <code>RagService</code>/<code>CoachService</code> n'importent pas <code>langgraph</code> ; le graphe est un module d'orchestration séparé.</li>
+          <li><strong>Chemin impératif = référence</strong> : le graphe doit être désactivable ; les tests ciblent les services.</li>
+          <li><strong>Toute logique métier dans un nœud = bug de conception.</strong></li>
+        </ul>
+      </div>
+
+      <div class="mt-4 rounded-lg border border-warn/40 bg-warn/10 p-3 text-xs text-amber-200">
+         <strong>Décision prise.</strong> ADR 0009 est acceptée : LangGraph est le passe-plat d'orchestration ; la logique métier et les tests restent dans les services impératifs.
+         <span class="src">adr/0009-langgraph-orchestration-and-deterministic-frontier.md</span> (status : accepted).
+      </div>
+    </div>
+
+    <!-- A4c INVESTIGATION -->
+    <div class="mt-8 rounded-2xl border border-fuchsia-500/40 bg-fuchsia-500/5 p-5" id="investigation">
+      <div class="flex flex-wrap items-center gap-2">
+        <h4 class="text-lg font-semibold text-white">A4c · Investigation ReAct bornée</h4>
+        <span class="text-[.65rem] px-2 py-0.5 rounded-full bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40">Agentique optionnel</span>
+        <span class="text-[.65rem] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">ADR 0010 proposé</span>
+      </div>
+      <p class="text-slate-300 mt-3 text-sm leading-relaxed">
+        C'est le vrai point d'agentivité : l'orchestrateur ou un nœud responsable décide qu'il ne
+        comprend pas encore suffisamment la question ou la position, appelle un outil autorisé,
+        observe le résultat, puis décide éventuellement d'un appel suivant. Ce n'est pas une boucle
+        libre : le menu, le budget, la profondeur et les sorties sont bornés.
+      </p>
+
+      <pre class="mermaid mt-4">flowchart TD
+  Q["question + niveau + contexte"] --> D{"investiguer ?"}
+  D -- non --> C["CoachContext courant"]
+  D -- oui --> I["investigate_position"]
+  I --> T{"choisir un outil autorisé"}
+  T --> A["OpeningTree : enfants directs"]
+  T --> S["Stockfish : MultiPV / PV courte"]
+  T --> L["Lichess : statistiques"]
+  T --> R["RAG : idée / plan / piège"]
+  A --> O[observation]
+  S --> O
+  L --> O
+  R --> O
+  O --> N{"contexte suffisant ?"}
+  N -- non, tour suivant --> T
+  N -- oui ou budget atteint --> X["InvestigationContext sourcé"]
+  C --> CO[CoachGenerator]
+  X --> CO
+  classDef det fill:#0e3a22,stroke:#22c55e,color:#d1fae5;
+  classDef agent fill:#3b1d5e,stroke:#a855f7,color:#f3e8ff;
+  classDef guard fill:#513814,stroke:#f59e0b,color:#fef3c7;
+  class A,S,L,R,O,X,C,CO det;
+  class I,T agent;
+  class D,N guard;</pre>
+      <p class="text-xs text-slate-500 mt-2">La boucle alterne decide → call → observe → decide, avec une limite de tours et d'appels. <span class="src">adr/0010</span></p>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-5">
+        <div class="glass rounded-xl p-4">
+          <h5 class="font-semibold text-fuchsia-300 text-sm">Déclenchement par l'orchestrateur</h5>
+          <p class="text-sm text-slate-300 mt-2">Signaux : intention, niveau pédagogique, confiance, sortie de théorie, question stratégique et contexte déjà disponible.</p>
+          <p class="text-xs text-slate-400 mt-2">Exemples : « Pourquoi ce coup ? », « Y a-t-il un piège ? », « Quel est le plan après cette stratégie ? »</p>
+        </div>
+        <div class="glass rounded-xl p-4">
+          <h5 class="font-semibold text-emerald-300 text-sm">Budget par défaut</h5>
+          <ul class="text-sm text-slate-300 mt-2 space-y-1 list-disc list-inside">
+            <li>3 tours maximum</li>
+            <li>4 appels maximum</li>
+            <li>enfants directs / PV courte</li>
+            <li>profondeur, <code>movetime</code> et <code>MultiPV</code> choisis par l'agent puis bornés par le backend</li>
+            <li>appels indépendants parallélisés</li>
+            <li>arrêt sur timeout ou preuve suffisante</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="mt-4 overflow-x-auto glass rounded-xl">
+        <table class="w-full text-sm">
+          <thead class="text-left text-slate-400 text-xs uppercase tracking-wider"><tr class="border-b border-edge"><th class="px-4 py-3">Objectif</th><th class="px-4 py-3">Investigation</th><th class="px-4 py-3">Sortie coach</th></tr></thead>
+          <tbody class="divide-y divide-edge text-slate-300">
+            <tr><td class="px-4 py-3">Comprendre la logique</td><td class="px-4 py-3">Stockfish MultiPV + Lichess + prose RAG</td><td class="px-4 py-3">comparaison des candidats, idée et plan sourcés</td></tr>
+            <tr><td class="px-4 py-3">Anticiper un piège à deux coups</td><td class="px-4 py-3">continuations directes + PV Stockfish + variation d'évaluation</td><td class="px-4 py-3">« si …X, alors …Y » ; mot « piège » uniquement si preuve moteur</td></tr>
+            <tr><td class="px-4 py-3">Développer une stratégie</td><td class="px-4 py-3">enfants directs + prose conditionnelle + statistiques</td><td class="px-4 py-3">prochaines idées, risques et développement futur</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-4">
+        <div class="glass rounded-xl p-4 text-sm border-l-2 border-det">
+          <h5 class="font-semibold text-det text-sm">Frontière déterministe</h5>
+          <p class="text-slate-300 mt-1">Validation des outils, légalité, budget, profondeur, provenance, scores et séparation position courante / suite possible.</p>
+        </div>
+        <div class="glass rounded-xl p-4 text-sm border-l-2 border-llm">
+          <h5 class="font-semibold text-llm text-sm">Frontière agentique</h5>
+          <p class="text-slate-300 mt-1">Décision de creuser, ordre des observations, arrêt de la boucle et formulation pédagogique finale.</p>
+        </div>
+      </div>
+
+      <div class="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-200">
+        <strong>Garde-fou tactique.</strong> Le coach peut annoncer un « piège » uniquement si une PV Stockfish valide montre la séquence et une bascule d'évaluation ou conséquence tactique. Sans preuve : « suite possible », « risque » ou « idée à vérifier ».
+      </div>
+
+      <div class="mt-4 glass rounded-xl p-4">
+        <h5 class="font-semibold text-white text-sm">Budget Stockfish adaptatif</h5>
+        <p class="text-sm text-slate-300 mt-1">L'agent peut adapter le coût de l'évaluation à la question, sans dépasser les plafonds backend :</p>
+        <div class="mt-3 grid sm:grid-cols-3 gap-2 text-xs">
+          <div class="rounded-lg bg-ink p-3"><strong class="text-ok">Question générale</strong><br><span class="text-slate-400">depth 10 · MultiPV 2 · budget court</span></div>
+          <div class="rounded-lg bg-ink p-3"><strong class="text-ok">Plan stratégique</strong><br><span class="text-slate-400">depth 14 · MultiPV 3 · PV courte</span></div>
+          <div class="rounded-lg bg-ink p-3"><strong class="text-ok">Tactique / piège</strong><br><span class="text-slate-400">depth 18 · MultiPV 3 · movetime borné</span></div>
+        </div>
+        <p class="text-xs text-amber-300 mt-3">La profondeur est un budget de calcul, pas une preuve de justesse. Une affirmation tactique exige une PV valide, une évaluation suffisamment stable et le contrôle de cohérence.</p>
+        <p class="mt-2"><span class="src">adr/0010</span> <span class="src">IMPROVEMENT.md:30-67</span></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== A5 MATRICE ===== -->
+  <section id="matrice" class="scroll-mt-20 mt-12">
+    <h3 class="text-xl font-semibold text-white">A5 · Matrice comparative</h3>
+    <p class="text-slate-300 mt-3 text-sm">Notes de 1 (faible) à 5 (fort). <span class="up">▲ plus haut = mieux</span> ; <span class="down">▼ plus bas = mieux</span>. Notation d'aide à la décision, pas une mesure instrumentée.</p>
+
+    <div class="mt-4 overflow-x-auto glass rounded-xl">
+      <table class="w-full text-sm">
+        <thead class="text-left text-slate-400 text-xs uppercase tracking-wider">
+          <tr class="border-b border-edge">
+            <th class="px-3 py-3">Variante</th>
+            <th class="px-3 py-3">Complexité <span class="down"></span></th>
+            <th class="px-3 py-3">Testabilité <span class="up"></span></th>
+            <th class="px-3 py-3">Pertinence <span class="up"></span></th>
+            <th class="px-3 py-3">Latence <span class="up"></span></th>
+            <th class="px-3 py-3">Traçabilité <span class="up"></span></th>
+            <th class="px-3 py-3">Conformité ADR <span class="up"></span></th>
+            <th class="px-3 py-3">Somme*</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-edge text-slate-300" id="matrix-body"><!-- injecté par JS --></tbody>
+      </table>
+    </div>
+     <p class="text-xs text-slate-500 mt-2">* Score pondéré indicatif : testabilité ×2, pertinence ×2, traçabilité ×1.5, conformité ADR ×1.5, complexité et latence ×1. Ce n'est pas une mesure instrumentée.</p>
+
+    <h4 class="text-white font-semibold mt-6 mb-2 text-sm">Détail par dimension</h4>
+    <div id="radar-bars" class="grid md:grid-cols-2 gap-x-8 gap-y-3"><!-- injecté par JS --></div>
+
+    <div class="mt-6 grid md:grid-cols-3 gap-4">
+      <div class="glass rounded-xl p-4 border-t-2 border-emerald-500">
+        <div class="font-semibold text-emerald-300 text-sm">Meilleure testabilité</div>
+        <p class="text-xs text-slate-400 mt-1">A et H — frontière entièrement déterministe, testables sans Ollama, fallback systématique.</p>
+      </div>
+      <div class="glass rounded-xl p-4 border-t-2 border-fuchsia-500">
+        <div class="font-semibold text-fuchsia-300 text-sm">Meilleure agentivité</div>
+        <p class="text-xs text-slate-400 mt-1">C et F — sélection dynamique d'outils / planner. Prix : latence, coût, testabilité, contrôle.</p>
+      </div>
+       <div class="glass rounded-xl p-4 border-t-2 border-cyan-500">
+         <div class="font-semibold text-cyan-300 text-sm">Colonne vertébrale</div>
+         <p class="text-xs text-slate-400 mt-1">E — classifieur typé, plan construit par le code, retrieval borné. A4c ajoute l'agentivité réelle seulement sur déclenchement.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== A6 RECO ===== -->
+  <section id="reco" class="scroll-mt-20 mt-12">
+    <h3 class="text-xl font-semibold text-white">A6 · Recommandation produit</h3>
+
+    <div class="mt-4 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-5">
+      <div class="flex items-center gap-2">
+         <span class="text-[.65rem] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-200 border border-cyan-500/40">Recommandé</span>
+         <h4 class="font-semibold text-white">E comme colonne vertébrale, base H, trajectoire H → E → G → A4c</h4>
+      </div>
+      <pre class="mermaid mt-4">flowchart TD
+  A["1. État déterministe\nvalidation · OpeningTree · cache\nLichess/Stockfish selon le plan"]
+  A --> B["2. Classifieur typé\nintent + phase + confidence"]
+  B --> P["3. RetrievalPlan construit par le code\nbuckets · budgets · filtres"]
+  P --> I{"Investigation A4c ?"}
+  I -- non --> R["4. RAG par buckets + rerank"]
+  I -- oui --> X["Boucle ReAct bornée\nmax 3 tours / 4 appels"]
+  X --> R
+  R --> C["5. Coach contraint\nEvidencePack"]
+  C --> V["6. Vérificateur de claims\nPuis fallback si invalide"]
+  classDef det fill:#0e3a22,stroke:#22c55e,color:#d1fae5;
+  classDef llm fill:#3b1d5e,stroke:#a855f7,color:#f3e8ff;
+  classDef guard fill:#513814,stroke:#f59e0b,color:#fef3c7;
+  class A,P,R,V det; class B,X,C llm; class I guard;</pre>
+       <p class="text-sm text-slate-200 mt-4">Le LLM ne choisit pas les sources critiques : il reçoit le plan et l'<code>EvidencePack</code>. Les services et le chemin impératif restent testables sans LangGraph. <span class="src">adr/0009</span> <span class="src">adr/0011</span></p>
+    </div>
+
+    <div class="mt-5 grid md:grid-cols-2 gap-4">
+      <div class="glass rounded-xl p-4">
+        <h4 class="font-semibold text-det text-sm">Ce qui reste déterministe (obligatoire)</h4>
+        <ul class="mt-2 text-sm text-slate-300 space-y-1 list-disc list-inside">
+          <li>Légalité des coups</li>
+          <li>Validation FEN</li>
+          <li>Intégrité des scores Stockfish</li>
+          <li>Timeouts et fallbacks</li>
+          <li>Traçabilité des sources</li>
+        </ul>
+        <p class="mt-2"><span class="src">IMPROVEMENT.md:321-327</span></p>
+      </div>
+      <div class="glass rounded-xl p-4">
+        <h4 class="font-semibold text-llm text-sm">Ce que le LLM peut décider</h4>
+        <ul class="mt-2 text-sm text-slate-300 space-y-1 list-disc list-inside">
+           <li>Classifieur : intention + phase + confiance</li>
+           <li>Investigation A4c si le déclencheur est admissible</li>
+           <li>Adaptation au niveau du joueur</li>
+           <li>Formulation pédagogique contrainte par les preuves</li>
+        </ul>
+        <p class="mt-2"><span class="src">IMPROVEMENT.md:329-334</span></p>
+      </div>
+    </div>
+
+    <div class="mt-5 glass rounded-xl p-4">
+      <h4 class="font-semibold text-white text-sm mb-2">Formulation défendable en soutenance</h4>
+      <blockquote class="border-l-4 border-cyan-500 pl-4 text-slate-200 italic">
+        « Le système est un agent spécialisé, hybride et contraint. Les décisions critiques sont déterministes pour garantir la
+        fiabilité échiquéenne, tandis que le LLM peut raisonner sur les sources, choisir leur pertinence et produire
+        l'explication pédagogique. »
+      </blockquote>
+      <p class="mt-2"><span class="src">IMPROVEMENT.md:153-155</span></p>
+    </div>
+
+    <div class="mt-4 rounded-xl border border-warn/40 bg-warn/10 p-4 text-sm text-amber-200">
+       <strong>Trajectoire LangGraph.</strong> H est le comportement impératif de référence. E ajoute le routage typé et le plan construit par le code ; G stabilise le MVP agentique ; A4c est le seul point ReAct borné. F devient une cible V2 conditionnelle, pas le chemin V1.
+       <span class="src">adr/0009</span> · <span class="src">adr/0010</span>
+     </div>
+  </section>
+
+  <!-- ===== A7 V2 ===== -->
+  <section id="v2" class="scroll-mt-20 mt-12">
+    <h3 class="text-xl font-semibold text-white">A7 · Cible V2 : F révisé</h3>
+    <p class="text-slate-300 mt-3 text-sm leading-relaxed">
+      F n'est pas la prochaine étape du MVP. C'est la cible lorsque le corpus, le harnais et les mesures
+      auront gagné le droit d'ajouter de la complexité. La version cible conserve un chemin impératif
+      désactivable, trois modes de retrieval initiaux et A4c comme boucle de suffisance bornée.
+    </p>
+    <pre class="mermaid mt-4">flowchart TD
+  S["FEN + question + niveau"] --> N["normalize / OpeningTree"]
+  N --> J{"join des faits indépendants"}
+  J --> L[Lichess / cache]
+  J --> SF[Stockfish / cache]
+  J --> P[Profil et historique]
+  J --> IR[Classifieur intent + phase]
+  L --> PL[Planner V2]
+  SF --> PL
+  P --> PL
+  IR --> PL
+  PL --> M{"mode retrieval"}
+  M --> O["par noeud"]
+  M --> CS["par concept / structure"]
+  M --> G["général sans filtre"]
+  M --> K["candidats Stockfish + Lichess"]
+  M --> Z["aucun retrieval"]
+  O --> R["RAG déterministe + tri bucket puis cosine"]
+  CS --> R
+  G --> R
+  K --> R
+  Z --> E["EvidencePack facts only"]
+  R --> E2["EvidencePack + niveaux de source"]
+  E --> Q{"suffisant ?"}
+  Q -- non, budget restant --> RP["replanification bornée A4c"]
+  RP --> M
+  Q -- oui / budget atteint --> CO["Coach contraint"]
+  CO --> V["ClaimVerifier : attribution + légalité"]
+  V -- invalide --> RG["régénération bornée / fallback"]
+  V -- valide --> OUT[réponse]
+  RG --> OUT
+  classDef det fill:#0e3a22,stroke:#22c55e,color:#d1fae5;
+  classDef agent fill:#3b1d5e,stroke:#a855f7,color:#f3e8ff;
+  classDef guard fill:#513814,stroke:#f59e0b,color:#fef3c7;
+  class N,J,L,SF,P,R,PL,O,CS,CO,G,K,Z,E,E2,V,OUT det;
+  class IR,RP,RG agent;
+  class M,Q guard;</pre>
+    <div class="grid md:grid-cols-2 gap-4 mt-4">
+      <div class="glass rounded-xl p-4 border-l-2 border-det">
+        <h4 class="font-semibold text-det text-sm">Conditions d'entrée</h4>
+        <ul class="mt-2 text-sm text-slate-300 space-y-1 list-disc list-inside">
+          <li>Harnais d'intention d'au moins 50 questions françaises étiquetées.</li>
+          <li>Confusion matrix et calibration des seuils du classifieur.</li>
+          <li>Corpus élargi, sources ajoutées une par une avec mesure de pollution.</li>
+          <li>Mesure de latence bout en bout sous le seuil produit.</li>
+          <li>Chemin impératif toujours exécutable et désactivable du graphe.</li>
+        </ul>
+      </div>
+      <div class="glass rounded-xl p-4 border-l-2 border-llm">
+        <h4 class="font-semibold text-llm text-sm">Extensions V2 justifiées par le corpus</h4>
+        <ul class="mt-2 text-sm text-slate-300 space-y-1 list-disc list-inside">
+          <li>Niveau de source : canonique, pédagogique, secondaire, opinion.</li>
+          <li>Second axe d'ancrage : thèmes, structures de pions, phase de jeu.</li>
+          <li>Détection des contradictions et déduplication inter-sources.</li>
+          <li>Forums en dernier, avec attribution explicite et validation de licence.</li>
+          <li>Cross-encoder seulement si le volume de candidats le justifie.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
+      <strong>Règle de survie.</strong> Aucun noeud V2 n'entre dans le graphe sans cas de test, métrique
+      associée et fallback. F est donc une trajectoire mesurée, pas une permission d'empiler des étapes.
+      <span class="src">adr/0006:135-180</span> <span class="src">adr/0011</span>
+    </div>
+  </section>
+
+  <div class="hidden" aria-hidden="true">
+  <!-- ================= PARTIE B (moved to agent-workflow.html) ================= -->
+  <div class="mt-16 border-t border-edge pt-6">
+    <h2 class="text-2xl font-bold text-white">Partie B · Workflow des agents de développement</h2>
+    <p class="text-slate-400 text-sm mt-1">La couche « agentique » du repo : le travail des agents de code sur le projet.</p>
+  </div>
+
+  <!-- B1 -->
+  <section id="pipeline" class="scroll-mt-20 mt-10">
+    <h3 class="text-xl font-semibold text-white">B1 · Pipeline « Idea → Ship »</h3>
+    <pre class="mermaid mt-4">flowchart LR
+  IDEA([idée floue]) --> G["grill-with-docs / grilling\ndomain-modeling"]
+  G --> RS["research"]
+  G --> PR["prototype / handoff"]
+  RS --> SPEC["to-spec"]
+  PR --> SPEC
+  SPEC --> TK["to-tickets"]
+  TK --> IMPL["implement / implement-spec / tdd"]
+  IMPL --> CR["code-review"]
+  CR --> PRR["pr"]
+  PRR --> RETRO["retro"]
+  classDef det fill:#0e3a22,stroke:#22c55e,color:#d1fae5;
+  classDef llm fill:#3b1d5e,stroke:#a855f7,color:#f3e8ff;
+  class G,RS,PR,SPEC,IMPL,CR,PRR llm;
+  class RETRO det;</pre>
+    <div class="grid md:grid-cols-2 gap-4 mt-4">
+      <div class="glass rounded-xl p-4 text-sm">
+        <h4 class="font-semibold text-white text-sm">On-ramps <span class="src">skill-index.md:96-103</span></h4>
+        <ul class="mt-2 text-slate-300 space-y-1 list-disc list-inside">
+          <li>Issues brutes → <code>triage</code></li>
+          <li>Comportement cassé → <code>diagnosing-bugs</code></li>
+          <li>Gros effort flou → <code>wayfinder</code></li>
+          <li>Santé du code → <code>improve-codebase-architecture</code> + <code>codebase-design</code></li>
+        </ul>
+      </div>
+      <div class="glass rounded-xl p-4 text-sm">
+        <h4 class="font-semibold text-white text-sm">Frontières de phase <span class="src">skill-index.md:105-112</span></h4>
+        <ul class="mt-2 text-slate-300 space-y-1 list-disc list-inside">
+          <li>Continue · Handoff · Subagent · Compact/clear</li>
+          <li>Chaque étape a une sortie durable (spec, ticket, PR, ADR).</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- B2 -->
+  <section id="frontiere-dev" class="scroll-mt-20 mt-10">
+    <h3 class="text-xl font-semibold text-white">B2 · Frontière déterministe vs agent</h3>
+    <div class="mt-4 grid md:grid-cols-2 gap-4">
+      <div class="glass rounded-xl p-4 border-l-2 border-det">
+        <h4 class="font-semibold text-det text-sm">Gates déterministes (contrôle)</h4>
+        <ul class="mt-2 text-sm text-slate-300 space-y-1 list-disc list-inside">
+          <li><code>docs/AGENT_CONTEXT.md</code> = contrat d'exécution</li>
+          <li>Ordre de lecture obligatoire</li>
+          <li>Workflow : research → ADR → <strong>validation utilisateur</strong> → code</li>
+          <li>Validation humaine sur phases majeures (dont intégration LangGraph)</li>
+        </ul>
+        <p class="mt-2"><span class="src">AGENT_CONTEXT.md:5-18,42-74</span> <span class="src">adr/0001:5</span></p>
+      </div>
+      <div class="glass rounded-xl p-4 border-l-2 border-llm">
+        <h4 class="font-semibold text-llm text-sm">Zone agent (jugement LLM)</h4>
+        <ul class="mt-2 text-sm text-slate-300 space-y-1 list-disc list-inside">
+          <li>Grilling / sharpening d'idée</li>
+          <li>Recherche et synthèse</li>
+          <li>Prototypage</li>
+          <li>Implémentation, review, rédaction de PR</li>
+        </ul>
+        <p class="mt-2 text-slate-400">« La vitesse brute est sacrifiée lorsque nécessaire pour protéger la cohérence du POC. » <span class="src">adr/0001:11</span></p>
+      </div>
+    </div>
+    <div class="mt-4 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-4 text-sm text-cyan-100">
+      Analogie avec la Partie A : dans les deux cas, le cœur décisionnel <strong>critique</strong> est déterministe et traçable ;
+      l'agentivité (LLM) intervient dans la zone de jugement, derrière des gates et des fallbacks.
+    </div>
+  </section>
+
+  <!-- B3 -->
+  <section id="chaines" class="scroll-mt-20 mt-10">
+    <h3 class="text-xl font-semibold text-white">B3 · Chaînes de skills</h3>
+    <div class="grid md:grid-cols-2 gap-4 mt-4">
+      <div class="glass rounded-xl p-4">
+        <h4 class="font-semibold text-white text-sm">Configuration multi-service <span class="src">skill-index.md:133-145</span></h4>
+        <pre class="text-xs text-emerald-300 bg-ink rounded-lg p-3 mt-2 overflow-x-auto">python-configuration -> pydantic -> fastapi
+-> docker-compose-patterns -> security-and-hardening</pre>
+        <p class="text-xs text-slate-400 mt-2">Puis : <code>writing-for-agents → codebase-design → research → ADR → tdd</code></p>
+      </div>
+      <div class="glass rounded-xl p-4">
+        <h4 class="font-semibold text-white text-sm">Feature substantielle <span class="src">skill-index.md:147-161</span></h4>
+        <pre class="text-xs text-emerald-300 bg-ink rounded-lg p-3 mt-2 overflow-x-auto">research si besoin -> to-spec -> to-tickets
+-> tdd -> implement -> code-review</pre>
+        <p class="text-xs text-slate-400 mt-2">Docs : <code>writing-for-agents → domain-modeling → grilling/grill-with-docs</code></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- B4 -->
+  <section id="reco-dev" class="scroll-mt-20 mt-10">
+    <h3 class="text-xl font-semibold text-white">B4 · Recommandation workflow</h3>
+    <div class="mt-4 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-5">
+      <span class="text-[.65rem] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-200 border border-cyan-500/40">Recommandé</span>
+      <p class="mt-3 text-sm text-slate-200">Conserver les gates déterministes actuels (lecture obligatoire, research→ADR→validation, ADR pour toute décision structurante) et réserver l'agentivité aux phases de <strong>grilling</strong>, <strong>prototypage</strong> et <strong>implémentation test-first</strong>. Le pipeline est déjà un hybride cohérent : contrôle humain déterministe + jugement LLM borné.</p>
+      <p class="mt-3 text-xs text-slate-400">Toute décision résolue pendant un grill doit laisser une trace : terme au GLOSSARY ou ADR. <span class="src">skill-index.md:155-161</span></p>
+    </div>
+  </section>
+
+  </div>
+  <div class="mt-16 rounded-xl border border-edge bg-panel/60 p-4 text-sm text-slate-300">
+    Le workflow des agents de développement est documenté séparément : <a class="text-ok underline" href="agent-workflow.html">ouvrir `agent-workflow.html` ↗</a>.
+  </div>
+
+  <!-- ================= PARTIE C ================= -->
+  <div class="mt-16 border-t border-edge pt-6">
+    <h2 class="text-2xl font-bold text-white">Partie C · Vue transverse</h2>
+  </div>
+
+  <section id="transverse" class="scroll-mt-20 mt-10">
+    <h3 class="text-xl font-semibold text-white">C1 · Où doit passer la frontière déterministe</h3>
+    <div class="mt-4 overflow-x-auto glass rounded-xl">
+      <table class="w-full text-sm">
+        <thead class="text-left text-slate-400 text-xs uppercase tracking-wider">
+          <tr class="border-b border-edge"><th class="px-4 py-3">Couche</th><th class="px-4 py-3">Déterministe (fait foi)</th><th class="px-4 py-3">Agent / LLM (propose)</th><th class="px-4 py-3">Garde-fou</th></tr>
+        </thead>
+        <tbody class="divide-y divide-edge text-slate-300">
+          <tr><td class="px-4 py-3 font-semibold">Produit — faits</td><td class="px-4 py-3">légalité, FEN, scores Stockfish, arbre d'ouvertures</td><td class="px-4 py-3">—</td><td class="px-4 py-3">validation backend</td></tr>
+          <tr><td class="px-4 py-3 font-semibold">Produit — routage</td><td class="px-4 py-3">RetrievalPlan construit par le code</td><td class="px-4 py-3">intent / phase router</td><td class="px-4 py-3">confidence + fallback rule-based</td></tr>
+          <tr><td class="px-4 py-3 font-semibold">Produit — prose</td><td class="px-4 py-3">template conservateur</td><td class="px-4 py-3">coach LLM contraint</td><td class="px-4 py-3">source-bounded + fallback + labels</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="ouvertes" class="scroll-mt-20 mt-10">
+    <h3 class="text-xl font-semibold text-white">C2 · Décisions ouvertes</h3>
+    <div class="mt-4 grid md:grid-cols-2 gap-4">
+       <div class="glass rounded-xl p-4 text-sm"><strong class="text-white">Agrandir l'évaluation routeur</strong><p class="text-slate-400 mt-1">JEV/System One a déjà été comparé : 20 cas, 0.65 de contexte coach utilisable contre 0.80 rule-based, false current line 0.20 contre 0.00. Agrandir le set avant de rouvrir la décision. <span class="src">experiments/rag/eval_v2/runs/ab</span></p></div>
+      <div class="glass rounded-xl p-4 text-sm"><strong class="text-white">Où vit l'arbre d'ouvertures</strong><p class="text-slate-400 mt-1">MongoDB maintenant, ou JSON/in-memory d'abord puis Mongo. <span class="src">chess-openings-in-rag:141-143</span></p></div>
+      <div class="glass rounded-xl p-4 text-sm"><strong class="text-white">Timing d'introduction LangGraph</strong><p class="text-slate-400 mt-1">Après stabilisation du chemin coach ; G avant F. <span class="src">adr/0006:178-179</span> <span class="src">adr/0007:31</span></p></div>
+      <div class="glass rounded-xl p-4 text-sm"><strong class="text-white">Tool calling dynamique</strong><p class="text-slate-400 mt-1">À réserver aux questions réellement variées, pas au flux standard. <span class="src">IMPROVEMENT.md:268,423</span></p></div>
+    </div>
+  </section>
+
+  <!-- ===== SOURCES ===== -->
+  <section id="sources" class="scroll-mt-20 mt-10 mb-20">
+    <h3 class="text-xl font-semibold text-white">C3 · Annexe sources</h3>
+    <div class="mt-4 overflow-x-auto glass rounded-xl">
+      <table class="w-full text-sm">
+        <thead class="text-left text-slate-400 text-xs uppercase tracking-wider">
+          <tr class="border-b border-edge"><th class="px-4 py-3">Fichier</th><th class="px-4 py-3">Passages utilisés</th></tr>
+        </thead>
+        <tbody class="divide-y divide-edge text-slate-300">
+          <tr><td class="px-4 py-3 font-mono text-xs">IMPROVEMENT.md</td><td class="px-4 py-3">Synthèse agentique (125-155) · Arch A (157) · B (179) · C (233) · D (270) · reco POC (304) · prompt routeur (338) · JEV (355) · perf (414) · RAG fenêtre locale (425)</td></tr>
+          <tr><td class="px-4 py-3 font-mono text-xs">docs/wikichess_rag_langgraph_architecture.md</td><td class="px-4 py-3">responsabilités (177) · archi (224) · agentique (269) · stratégies (317) · planner (421) · hybrid (564) · rerank (638) · evidence (665) · coach (692) · consistency (711) · LangGraph (743) · éviter plusieurs agents (805) · vision (924) · MVP (973)</td></tr>
+          <tr><td class="px-4 py-3 font-mono text-xs">docs/ARCHITECTURE.md</td><td class="px-4 py-3">LangGraph cible (149) · frontal (163-165) · arbre déterministe (169) · routeur JEV (171) · fallbacks (179-189)</td></tr>
+           <tr><td class="px-4 py-3 font-mono text-xs">docs/adr/</td><td class="px-4 py-3">0002 (cible) · 0006 (RAG et LangGraph révisé) · 0007 (coach et LangGraph hors service) · 0001 (workflow agentique dev) · 0008 (langage du coach) · 0009 (orchestration LangGraph, accepté) · 0010 (investigation ReAct bornée, proposé) · 0011 (EvidencePack et ClaimVerifier, proposé)</td></tr>
+           <tr><td class="px-4 py-3 font-mono text-xs">docs/RAG-RUNBOOK.md</td><td class="px-4 py-3">coach conservateur (208-220) · baseline déterministe (194)</td></tr>
+           <tr><td class="px-4 py-3 font-mono text-xs">experiments/rag/eval_v2/</td><td class="px-4 py-3">20 cas · 9 intentions · A/B JEV contre rule-based · métriques de contexte coach</td></tr>
+           <tr><td class="px-4 py-3 font-mono text-xs">docs/adr/0011-evidence-pack-and-claim-verifier.md</td><td class="px-4 py-3">preuves numérotées, claims attribués, vérification déterministe, fallback</td></tr>
+          <tr><td class="px-4 py-3 font-mono text-xs">docs/reviews/2026-10-01-chess-openings-in-rag.md</td><td class="px-4 py-3">arbre déterministe vs RAG (68-126) · questions ouvertes (139-146)</td></tr>
+          <tr><td class="px-4 py-3 font-mono text-xs">docs/AGENT_CONTEXT.md · docs/agents/skill-index.md</td><td class="px-4 py-3">contrat agentique (1-18,42-74) · pipeline et chaînes skills (78-161)</td></tr>
+          <tr><td class="px-4 py-3 font-mono text-xs">docs/PLAN.md · docs/MVP.md · docs/RISKS.md</td><td class="px-4 py-3">LangGraph dans l'ordre de livraison (PLAN 17,33) · MVP (81) · risque LangGraph (12)</td></tr>
+          <tr><td class="px-4 py-3 font-mono text-xs">GLOSSARY.md</td><td class="px-4 py-3">vocabulaire métier (1-77)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-xs text-slate-500 mt-4">Document d'aide à la décision généré depuis la documentation du dépôt. En cas d'écart, les sources de vérité restent <span class="src">docs/</span> et <span class="src">docs/adr/</span>.</p>
+  </section>
+
+</main>
+
+<script>
+  // ---- Données de la matrice ----
+  const arches = [
+    { id:'A', name:'Workflow déterministe', cx:1, test:5, pert:2, lat:5, trac:5, adr:4, st:'Optionnel', color:'#38bdf8' },
+     { id:'B', name:'Collecte globale + sélection LLM', cx:2, test:2, pert:3, lat:3, trac:2, adr:2, st:'Écarté V1', color:'#64748b' },
+    { id:'C', name:'Tool calling dynamique (ReAct)', cx:5, test:1, pert:5, lat:2, trac:2, adr:3, st:'Spéculatif', color:'#d946ef' },
+    { id:'D', name:'Routeur de phase de jeu', cx:3, test:3, pert:3, lat:4, trac:4, adr:3, st:'Optionnel', color:'#38bdf8' },
+     { id:'E', name:"Classifieur typé + plan déterministe", cx:3, test:5, pert:5, lat:4, trac:5, adr:5, st:'Spine V1', color:'#06b6d4' },
+    { id:'F', name:'LangGraph Retrieval Planner complet', cx:5, test:2, pert:5, lat:3, trac:3, adr:2, st:'Reporté', color:'#f59e0b' },
+     { id:'G', name:'MVP agentique LangGraph', cx:3, test:4, pert:4, lat:4, trac:4, adr:5, st:'Palier', color:'#94a3b8' },
+     { id:'H', name:"Implémenté aujourd'hui", cx:2, test:5, pert:3, lat:4, trac:5, adr:5, st:'Décidé', color:'#22c55e' },
+     { id:'A4c', name:'Investigation ReAct bornée', cx:4, test:3, pert:5, lat:2, trac:4, adr:4, st:'Proposé', color:'#d946ef' }
+  ];
+
+  const statusColor = {
+     'Recommandé':'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+     'Spine V1':'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+     'Écarté V1':'bg-slate-500/20 text-slate-400 border-slate-500/40',
+     'Palier':'bg-slate-500/20 text-slate-300 border-slate-500/40',
+     'Proposé':'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40',
+    'Optionnel':'bg-sky-500/20 text-sky-300 border-sky-500/40',
+    'Spéculatif':'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40',
+    'Reporté':'bg-amber-500/20 text-amber-300 border-amber-500/40',
+    'À explorer':'bg-slate-500/20 text-slate-300 border-slate-500/40',
+    'Décidé':'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+  };
+
+  function dot(v, goodHigh) {
+    const col = goodHigh ? ['#ef4444','#f97316','#eab308','#84cc16','#22c55e'][v-1]
+                         : ['#22c55e','#84cc16','#eab308','#f97316','#ef4444'][v-1];
+    return `<span class="inline-flex items-center gap-1"><span class="score-dot" style="background:${col}"></span><span class="text-slate-400">${v}</span></span>`;
+  }
+
+  const tbody = document.getElementById('matrix-body');
+   const scored = arches.map(a => ({...a, sum:((6-a.cx)*1)+a.test*2+a.pert*2+a.lat*1+a.trac*1.5+a.adr*1.5}))
+                       .sort((x,y)=> y.sum - x.sum);
+  tbody.innerHTML = scored.map(a => {
+    const sc = statusColor[a.st] || statusColor['À explorer'];
+    return `<tr>
+      <td class="px-3 py-3"><span class="font-mono text-slate-500 mr-1">${a.id}</span>${a.name}<div class="mt-1"><span class="text-[.6rem] px-2 py-0.5 rounded-full border ${sc}">${a.st}</span></div></td>
+      <td class="px-3 py-3">${dot(a.cx,false)}</td>
+      <td class="px-3 py-3">${dot(a.test,true)}</td>
+      <td class="px-3 py-3">${dot(a.pert,true)}</td>
+      <td class="px-3 py-3">${dot(a.lat,true)}</td>
+      <td class="px-3 py-3">${dot(a.trac,true)}</td>
+      <td class="px-3 py-3">${dot(a.adr,true)}</td>
+       <td class="px-3 py-3 font-semibold text-white">${a.sum.toFixed(1)}<span class="text-slate-500 font-normal">/50</span></td>
+    </tr>`;
+  }).join('');
+
+  const dims = [
+    {key:'cx', label:'Complexité', goodHigh:false, inv:true},
+    {key:'test', label:'Testabilité', goodHigh:true},
+    {key:'pert', label:'Pertinence', goodHigh:true},
+    {key:'lat', label:'Latence', goodHigh:true},
+    {key:'trac', label:'Traçabilité', goodHigh:true},
+    {key:'adr', label:'Conformité ADR', goodHigh:true}
+  ];
+  const rb = document.getElementById('radar-bars');
+  rb.innerHTML = dims.map(d => `
+    <div>
+      <div class="flex justify-between text-xs mb-1"><span class="text-slate-300">${d.label} <span class="${d.goodHigh?'up':'down'}"></span></span><span class="text-slate-500">1 → 5</span></div>
+      ${arches.map(a => {
+        const v = a[d.key];
+        const pct = (v/5)*100;
+        const col = d.inv ? '#f87171' : a.color;
+        return `<div class="flex items-center gap-2 mb-1">
+          <span class="w-4 text-[.65rem] text-slate-500 font-mono">${a.id}</span>
+          <div class="bar flex-1" style="background:#0e1730"><span style="width:${pct}%;background:${col}"></span></div>
+          <span class="w-3 text-[.65rem] text-slate-500 text-right">${v}</span>
+        </div>`;
+      }).join('')}
+    </div>
+  `).join('');
+
+  // ---- TOC actif ----
+  const links = [...document.querySelectorAll('.toc-link')];
+  const ids = links.map(l => l.getAttribute('href').slice(1));
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active','border-cyan-500','bg-panel'));
+        const l = links.find(x => x.getAttribute('href') === '#' + e.target.id);
+        if (l) l.classList.add('active','border-cyan-500','bg-panel');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  ids.forEach(id => { const el = document.getElementById(id); if (el) obs.observe(el); });
+</script>
+</body>
+</html>

@@ -10,7 +10,7 @@ Ce document est la source de verite pour les risques projet, leurs mitigations e
 | Lichess indisponible pendant demo | Stats live absentes | Utiliser cache MongoDB ou donnees seedees documentees |
 | Stockfish difficile a packager | Sortie de theorie non couverte | Installer le binaire dans l'image backend et utiliser `python-chess.engine` |
 | LangGraph complexifie trop tot | Ralentit l'implementation du parcours | Stabiliser les services imperatifs avant orchestration LangGraph |
-| Reponses IA hallucinees | Perte de confiance demo | Contraindre le coach aux donnees structurees, RAG, Lichess et Stockfish ; fallback systematique vers le template source avec le label `llm_coach_unavailable` si le LLM local echoue ou refuse de citer ses sources |
+| Reponses IA hallucinees | Perte de confiance demo | Contraindre le coach aux donnees structurees, RAG, Lichess et Stockfish ; fallback systematique vers le template source avec un label diagnostique (`llm_coach_unavailable`, `llm_coach_timeout`, `llm_coach_empty`, `llm_coach_too_long` ou `llm_coach_source_metadata`) si le LLM local echoue |
 | Librairie echiquier incompatible | Bloque le frontend | Recherche cadree avant choix et fallback vers une autre librairie Angular |
 | Licences de sources incertaines | Risque livraison/client | Statut strict `valide`, `a verifier`, `refuse`; pas de source centrale non validee |
 | Trop de docs divergentes | Agents prennent des decisions contradictoires | Un role par document, `AGENT_CONTEXT.md` comme point d'entree, archives non maintenues |

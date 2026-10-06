@@ -2,17 +2,16 @@
 
 Status: accepted (2026-10-01, phase R mesuree ; **revise 2026-10-02 apres nettoyage du corpus et baseline GPU** ; **revise 2026-10-03 pour OpeningTree + eval v2**)
 
-Ce document capture les decisions structurantes de la phase RAG/Milvus. Il complete `docs/DATA.md` (source de verite des sources et du schema Milvus) sans le dupliquer. Le plan de travail est dans `TODO.md`, non autoritaire.
+Ce document capture les decisions structurantes de la phase RAG/Milvus. Il complete `docs/data/milvus.md` et `docs/data/sources.md` sans dupliquer leurs contrats.
 
-> Revision 2026-10-01 : la revue `docs/reviews/2026-10-01-rag-phase-r-0-1-code-review.md` et la note
-> `docs/reviews/2026-10-01-chess-openings-in-rag.md` ont invalide la conclusion mesuree d'origine.
+> Revision 2026-10-01 : les constats de revue de la phase R ont invalide la conclusion mesuree
+> d'origine et sont integres dans les decisions ci-dessous.
 > Les mesures precedentes melangeaient des metadonnees `chess-openings` quasi dupliquees avec de la
 > prose, et la pertinence etait jugee par identite d'ouverture, pas par passage. Les corrections et les
 > mesures refaites sont ci-dessous.
 
-La comparaison avec l'evaluation d'un depot de reference est documentee dans
-`docs/reviews/2026-10-01-rag-evaluation-comparison.md`. La revision 2026-10-03
-adopte la consequence principale : le corpus Wikibooks complet et l'evaluation v2
+La comparaison avec l'evaluation d'un depot de reference a conduit a la revision 2026-10-03 :
+le corpus Wikibooks complet et l'evaluation v2
 doivent etre construits autour d'un arbre structure d'ouvertures avant toute
 indexation Milvus et avant le cablage final du retrieval applicatif.
 
@@ -22,7 +21,7 @@ indexation Milvus et avant le cablage final du retrieval applicatif.
 `pgn`), pas de la prose pedagogique. Elle est donc retiree du corpus vectoriel : elle alimente le
 matching local / la jointure `eco_code`, l'arbre d'ouvertures et la future collection MongoDB
 `openings`, pas Milvus. Milvus ne contient que de la **prose pedagogique** (Wikibooks Chess Opening
-Theory pour l'instant). Cela leve la tension de `docs/DATA.md` (Milvus ne doit pas contenir la source
+Theory pour l'instant). Cela leve la tension de `docs/data/milvus.md` (Milvus ne doit pas contenir la source
 canonique du matching).
 
 L'explorateur d'ouvertures (`OpeningTree`) est maintenant une decision de prerequis pour le corpus
@@ -32,75 +31,11 @@ relations parent/enfants, l'index de positions et les metadonnees de jointure ut
 mapper et evaluer Wikibooks. MongoDB reste la cible runtime ulterieure pour `openings`, mais la phase de
 nettoyage et de snapshot Wikibooks ne doit pas dependre d'une base MongoDB disponible.
 
-## Mesures de la phase R (refaites sur corpus nettoye)
+## Evaluation
 
-Harness `experiments/rag/` sur le golden set francais (15 requetes, dont 13 notees), corpus **prose
-seul et nettoye** (13 pages Wikibooks curees), embeddings `qwen3-embedding:0.6b` via Ollama, Milvus
-Lite, `k=5`, retrieval purement semantique, jugements **au passage**
-(`experiments/rag/judgments.json`), latence mesuree avec warm-up et 3 passes
-(`--warmup 2 --repeats 3`). Les runs de reference sont `20261002T075844Z_section` et
-`20261002T080035Z_page`.
-
-| Granularite | chunks | hit@5 | MRR | nDCG@5 | latence totale p50 / p95 |
-| --- | --- | --- | --- | --- | --- |
-| `page` | 13 | 0.923 | 0.923 | 0.923 | 70 ms / 179 ms |
-| **`section`** | 52 | 1.000 | 0.756 | 0.552 | 64 ms / 139 ms |
-
-Latence de retrieval controlee : l'embedding de requete domine (p50 ~51-73 ms), la recherche Milvus
-est ~5-7 ms. Les deux runs ont ete mesures dans les memes conditions (ingest puis warm-up puis passes).
-
-**Lecture prudente.** Le score `page` est **gonfle par la taille du corpus** : avec 13 documents et
-`k=5`, le top-5 couvre 38 % de la collection, donc retrouver la bonne page est presque trivial.
-Malgre cela, `page` manque la requete `dame-c4`. Le score `section` teste le comportement utile au
-coach : retrouver **le passage** qui explique l'idee, parmi 52 chunks, et atteint hit@5 1.000.
-`recall@k` reste dilue (une page notee contient plusieurs sections). La granularite par defaut reste
-donc **`section`** ; `page` reste un axe de config, et le choix sera revalide sur un corpus prose plus
-large (corpus complet ou pages supplementaires).
-
-Le nettoyage est structurel via `mwparserfromhell`. Les templates de position, references, tables
-HTML/wikitext et liens de navigation sont retires ; les sections `Theory table`, `References`,
-`See also`, `External links` et `Further reading` sont exclues avec leurs sous-sections. Les titres
-pedagogiques, paragraphes, listes et libelles de liens sont conserves. L'adaptateur rejette une page
-sans prose ou avec des marqueurs MediaWiki residuels. La version du nettoyeur participe a l'identite
-de collection et a la provenance du run, afin qu'une collection sale ne puisse pas etre reutilisee.
-
-- "ouverture espagnole" retrouve desormais la page Ruy Lopez (le corpus prose ne contient plus des
-  milliers de lignes `chess-openings` concurrentes), mais les alias francais des noms propres restent
-  un item ouvert (query expansion ou alias).
-- Requetes hors corpus (ex. "attaque autrichienne", absente des 13 pages) et scenario hors theorie :
-  **rapportes separement**, exclus des moyennes.
-
-### Baseline GPU homogene des 52 chunks
-
-Le run `20261002T093355241452Z_section` a reencode les 52 chunks sur la RTX 2060 dans la nouvelle
-collection immutable schema 3 `chess_knowledge_rag_section_b5b673751585`. Le rapport d'ingestion
-indique 52 demandes, 52 embeddings, zero reutilisation et une cardinalite finale de 52. Le runtime
-declare `processor=gpu`, le scope `document_and_query_embeddings`, 2 370 652 077 octets de VRAM et
-Ollama 0.35.0 ; `ollama ps` a confirme `100% GPU` apres le run. Le digest est reste
-`ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d`.
-
-| Mesure | CPU historique | GPU homogene |
-| --- | ---: | ---: |
-| Precision@1 / @3 / @5 | 0.615 / 0.462 / 0.308 | 0.615 / 0.462 / 0.308 |
-| Hit@5 | 1.000 | 1.000 |
-| Recall@5 | 0.536 | 0.536 |
-| MRR | 0.756 | 0.756 |
-| nDCG@5 | 0.552 | 0.553 |
-| embedding p50 / p95 | 53.4 / 132.4 ms | 37.3 / 47.6 ms |
-| recherche p50 / p95 | 6.9 / 10.3 ms | 6.3 / 9.9 ms |
-| total p50 / p95 | 63.6 / 138.8 ms | 45.0 / 54.6 ms |
-| ingestion / debit | non enregistre | 35.386 s embedding (1.469 chunks/s), 35.497 s total |
-| cardinalite | 52 | 52 |
-
-Le modele et son digest immuable, et non le processeur, sont l'identite principale des embeddings.
-Quatre top-5 changent legerement d'ordre ou de cinquieme candidat entre les runs. Seule la requete
-`gambit-roi` change une metrique de qualite : nDCG passe de 0.3462 a 0.3633 ; les autres metriques
-agregees hors nDCG restent identiques.
-
-Les jugements du benchmark v1 sont binaires et partiels. Precision@k est le nombre de passages juges
-pertinents dans le top-k divise par k ; avec une seule section jugee pertinente, meme une recherche
-parfaite plafonne donc a 0.2 pour Precision@5. Precision@5 reste une metrique diagnostique et ne doit
-pas etre presentee comme la metrique principale ; nDCG est plus representative du classement ici.
+Les mesures et les runs de reference sont conserves dans `docs/RAG-EVALUATION.md`. Cette separation
+evite de melanger les decisions structurelles avec les resultats experimentaux, qui seront enrichis
+au fil des corpus et des definitions de metriques.
 
 ## Contexte
 
@@ -166,22 +101,23 @@ decision projet, validee par mesure en phase R.
   ingest/no-ingest, la cardinalite demandee vs stockee et les hits retrouves.
 - **Fallback documente.** Si Milvus est indisponible, l'analyse renvoie un `rag_context` vide explicite
   et ajoute une entree dans `fallbacks_used`; elle n'echoue jamais. Le cablage reste a faire en phase 3.
-- **Retrieval** : `k=5`, metrique COSINE, index HNSW (`M=16`, `efConstruction=200`, `ef=128`), dimension
+- **Retrieval** : `k=5`, metrique COSINE, index HNSW (`M=16`, `efConstruction=200`, `ef=64`), dimension
   1024. Filtre `eco_code` doux cote production (non applique dans la mesure phase R).
 - **Evaluation au passage.** La pertinence est jugee sur le passage source (page notee, et section notee
   en granularite `section`), pas sur l'identite d'ouverture. Les requetes hors corpus et hors theorie
   sont rapportees a part et exclues des moyennes.
-- **Coach LLM** : Ollama `qwen2.5:7b-instruct` par defaut, challenger `qwen2.5:3b-instruct`, choisi en
-  phase 4. Provider cloud : ADR separe.
+- **Coach LLM** : le provider, le modele et l'URL sont choisis dans `config.toml`. NVIDIA NIM est le
+  provider par defaut actuel ; Ollama et Mistral utilisent le meme seam `LLMProvider`. Les secrets
+  sont valides par Pydantic selon le provider choisi.
 - **Coach contraint** : generation structuree sourcee, chaque affirmation taggee par l'id de sa source,
   validee cote backend, chaine grounded -> prompt-only -> template deterministe.
-- **LangGraph est reporte.** DAG deterministe dont chaque noeud appelle son outil par defaut, puis
-  conditions documentees, a terme routage agentique. `RagService`/`CoachService` ne doivent pas importer
-  `langgraph`.
+- **LangGraph est orchestre par ADR 0009.** Le graphe reste un module mince d'orchestration : DAG
+  deterministe, conditions documentees, puis agentivite bornee. `RagService`/`CoachService` ne doivent
+  pas importer `langgraph`. Le chemin imperatif reste la reference testable et desactivable.
 
 ## Consequences
 
-- `docs/DATA.md` : `eco_code` reste la cle de jointure ; le role de `chess-openings` est corrige
+- `docs/data/milvus.md` : `eco_code` reste la cle de jointure ; le role de `chess-openings` est corrige
   (structure, hors Milvus) ; le schema `chess_knowledge` gagne `page_id`, `section_index`, `part_index`.
   La prochaine revision de schema doit ajouter les metadonnees derivees de `OpeningTree` necessaires au
   corpus Wikibooks complet (`canonical_title`, `wikibooks_revision_id`, `opening_node_id`,
@@ -195,9 +131,10 @@ decision projet, validee par mesure en phase R.
   parallele depuis les chunks Milvus. Exemple : prose du noeud courant prioritaire, prose des enfants
   directs seulement comme suites conditionnelles, descendants plus profonds exclus par defaut, et sections
   `history` / `misc` exclues ou penalisees sauf intention explicite.
-- `config.toml` gagne `[embeddings]`, `[milvus]`, `[rag]`, `[llm]`. `MILVUS_URI` et `OLLAMA_BASE_URL`
-  vivent dans `.env` ; tout `milvus.uri` / `embeddings.base_url` / `llm.base_url` en `config.toml` est
-  ignore.
+- `config.toml` porte les choix non secrets `[embeddings]`, `[milvus]`, `[rag]` et `[llm]`, y compris
+  le provider, le modele et les URLs des providers LLM. `MILVUS_URI` et `OLLAMA_BASE_URL` restent
+  des valeurs d'environnement pour les connexions machine-specific ; les secrets LLM sont
+  provider-specific (`NVIDIA_API_KEY`, `MISTRAL_API_KEY`) et valides par Pydantic.
 - `minio/minio` a retire ses images Docker Hub ; la compose utilise `bitnamilegacy/minio`. Les
   credentials `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` sont propages a Milvus
   (`MINIO_ACCESS_KEY_ID` / `MINIO_SECRET_ACCESS_KEY`) pour que MinIO reste joignable en cas de

@@ -1,128 +1,47 @@
-# Contexte agentique du POC FFE
+# Agent Context
 
-Ce document est la reference principale pour tout agent qui travaille sur ce depot. Il transforme le cahier des charges et le plan projet en contraintes operationnelles pour limiter les reinterpretations et rendre le travail agentique presque deterministe.
+This document routes agents through the project context. Read it first, then load only the documents required by the task. The documentation index is `docs/README.md`.
 
-## Ordre de lecture obligatoire
+## Product
 
-Avant toute proposition ou implementation, lire dans cet ordre :
+The project is a local proof of concept that helps young chess players understand opening positions. The complete demonstration path is the priority: play moves, identify the opening, show candidate moves and Lichess statistics, explain the position with grounded context, use Stockfish outside theory, and expose video or documented fallback information.
 
-1. `docs/AGENT_CONTEXT.md`
-2. `docs/MVP.md`
-3. `docs/ARCHITECTURE.md`
-4. `docs/DATA.md` si la tache touche les sources, MongoDB, Milvus ou les caches
-5. `docs/UX.md` si la tache touche le frontend ou l'experience utilisateur
-6. `docs/PLAN.md` si la tache touche l'ordre de livraison
-7. `docs/RISKS.md` si la tache touche un fallback ou une mitigation
-8. `GLOSSARY.md`
-9. Les ADRs pertinents dans `docs/adr/`
-10. `docs/PROJECT.md` seulement pour verifier la demande client brute
+The product is a constrained hybrid coach. Deterministic code owns chess legality, source boundaries, budgets, persistence, fallbacks, and engine facts. LangGraph orchestrates stabilized services. The LLM reformulates available evidence for the selected level and must not invent facts.
 
-## Objectif produit
+## Non-negotiable stack
 
-Livrer en deux semaines un POC executable localement qui accompagne des jeunes joueurs d'echecs dans l'apprentissage des ouvertures. Le succes prioritaire est un parcours de demonstration complet : l'utilisateur joue des coups, obtient l'ouverture identifiee, des coups recommandes, une explication adaptee a son niveau, des statistiques Lichess, une video ou un fallback YouTube, et une evaluation Stockfish si la position sort de la theorie.
+Angular, FastAPI, Docker Compose, Stockfish, LangGraph, MongoDB, Milvus, Lichess API, and YouTube API are part of the target deliverable. A replacement or fallback is valid only when its activation condition, demo impact, and return path are documented in `docs/ARCHITECTURE.md` or an ADR.
 
-La valeur produit prime sur l'exhaustivite technique. Les briques techniques demandees doivent rester visibles et integrees, mais un parcours client fluide est prioritaire en cas de conflit.
+## Route By Task
 
-## Technologies non negociables
+Load only the relevant branch in addition to this file:
 
-Les technologies suivantes font partie du livrable cible et ne doivent pas etre remplacees silencieusement :
+| Task | Read next |
+| --- | --- |
+| Run the application or configure a local environment | `README.md`, `config.toml`, relevant Compose/runbook files |
+| Understand product scope or acceptance criteria | `docs/MVP.md` |
+| Backend API, services, orchestration, or contracts | `docs/ARCHITECTURE.md`, then relevant ADRs in `docs/adr/` |
+| MongoDB, Milvus, RAG, ingestion, cache, source, or license work | `docs/data/README.md`, relevant file in `docs/data/`, `docs/runbooks/RAG.md`, then ADR 0003/0005/0006 |
+| Angular, layout, interaction, or visual review | `docs/UX.md`, `docs/runbooks/UI-WORKFLOW.md`, ADR 0004 |
+| Coach, references, claims, or LLM behavior | ADR 0007/0008/0009/0010/0011 and `docs/runbooks/RAG.md` |
+| Planning or delivery order | `docs/PLAN.md` |
+| Risks or fallback behavior | `docs/RISKS.md`, then the relevant ADR |
+| Product vocabulary or domain model | `docs/GLOSSARY.md` |
+| Original client brief | `docs/PROJECT.md`, only when the current docs do not answer the question |
 
-- Angular pour le frontend.
-- FastAPI pour le backend.
-- Docker Compose pour l'execution locale.
-- Stockfish pour l'evaluation moteur.
-- LangGraph pour l'orchestration agentique.
-- MongoDB pour les donnees applicatives, sessions, ouvertures et caches.
-- Milvus pour la recherche vectorielle.
-- Lichess API pour les statistiques et donnees live.
-- YouTube API pour les videos explicatives.
+## Working Rules
 
-Un fallback est autorise uniquement s'il est documente dans `docs/ARCHITECTURE.md` ou dans un ADR, avec sa condition d'activation, son impact demo, et la maniere de revenir a la technologie cible.
+- Inspect the current code and authoritative docs before proposing changes.
+- Keep one source of truth for each decision; link instead of duplicating explanations.
+- Research and record a decision before changing an open architectural choice.
+- Major architectural, data, provider, external API, fallback, or MVP-priority changes require explicit user validation before implementation.
+- Preserve source attribution, license status, and fallback visibility in product behavior.
+- Validate changes with the narrowest relevant tests and record any unrun validation.
 
-## Workflow obligatoire avant implementation
+## Documentation Rules
 
-Aucune phase majeure d'implementation ne commence directement par du code.
-
-Pour chaque phase, l'agent doit :
-
-1. Lire les documents obligatoires.
-2. Identifier les decisions deja fermees et les decisions encore ouvertes.
-3. Faire une recherche cadree si la phase touche une zone ouverte.
-4. Proposer ou mettre a jour un ADR lorsque la decision est structurante.
-5. Demander validation utilisateur explicite.
-6. Implementer seulement apres validation.
-
-Les zones ouvertes pour recherche cadree sont :
-
-- Provider LLM.
-- Modele d'embeddings.
-- Sources pedagogiques documentaires.
-- Librairie d'echiquier Angular.
-
-Les agents peuvent rechercher d'autres technologies seulement si elles enrichissent une de ces zones sans remettre en cause l'architecture cible.
-
-## Validation humaine
-
-Le passage d'une phase majeure a la suivante requiert une validation utilisateur explicite. Une phase majeure inclut notamment :
-
-- choix de librairie frontend structurante ;
-- choix LLM ou embeddings ;
-- schema de donnees MongoDB ou Milvus ;
-- integration LangGraph ;
-- integration d'une API externe ;
-- modification d'un fallback documente ;
-- changement de priorite MVP.
-
-## Comportement attendu des agents
-
-Les agents doivent executer le cadre existant plutot que reinventer le projet. En cas d'ambiguite, ils doivent expliciter l'ambiguite, proposer une recommandation, puis attendre validation si la decision impacte l'architecture, les donnees, les couts ou la demonstration.
-
-Les agents ne doivent pas :
-
-- remplacer une technologie non negociable sans ADR ;
-- ajouter une nouvelle dependance structurante sans recherche et validation ;
-- privilegier une preuve technique au detriment du parcours complet ;
-- generer des explications d'echecs non rattachees aux sources disponibles ;
-- ignorer les conditions d'utilisation ou licences des sources de donnees.
-
-## Reponse du coach IA
-
-Le coach IA doit etre contraint par les sources. Il peut reformuler et pedagogiser, mais ne doit pas inventer de faits sur une ouverture, une statistique ou une evaluation.
-
-La reponse doit pouvoir indiquer clairement ce qui vient de :
-
-- l'ouverture identifiee localement ;
-- Lichess ;
-- le contexte documentaire RAG ;
-- Stockfish ;
-- YouTube ou son fallback.
-
-Le niveau pedagogique est adaptatif avec trois niveaux fixes : `debutant`, `intermediaire`, `avance`.
-
-## Politique sources et licences
-
-Chaque source utilisee doit etre documentee avec :
-
-- URL ;
-- role dans le produit ;
-- licence ou conditions d'utilisation ;
-- statut : `valide`, `a verifier`, ou `refuse` ;
-- justification courte.
-
-Une source avec statut `a verifier` peut etre utilisee pour exploration locale, mais ne doit pas devenir une dependance demo centrale sans validation.
-
-## Documentation attendue
-
-Le paquet documentaire initial est :
-
-- `docs/AGENT_CONTEXT.md` : contrat agentique et regles d'execution.
-- `docs/MVP.md` : perimetre du POC, criteres d'acceptation, priorites.
-- `docs/ARCHITECTURE.md` : architecture cible, flux, fallbacks autorises.
-- `docs/DATA.md` : sources, donnees, MongoDB, Milvus et caches.
-- `docs/UX.md` : interface Angular et parcours utilisateur.
-- `docs/PLAN.md` : ordre de livraison et phases.
-- `docs/RISKS.md` : risques, mitigations et escalades.
-- `GLOSSARY.md` : vocabulaire metier.
-- `docs/adr/` : decisions structurantes.
-
-`docs/PROJECT.md` conserve le brief client brut. `docs/archive/` conserve les anciens plans non maintenus. Ces fichiers ne doivent pas redevenir des sources de verite operationnelles.
+- `README.md` is the human how-to at the repository root.
+- `docs/README.md` is the documentation index.
+- `docs/AGENT_CONTEXT.md` is the agent routing contract, not a complete technical manual.
+- `docs/adr/` records durable structural decisions.
+- Generated reports, experiment runs, screenshots, and local agent scratch belong outside source documentation and should be ignored when appropriate.

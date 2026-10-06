@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="fr" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Workflow des agents de développement — POC FFE</title>
+<meta name="description" content="Workflow des agents de développement du POC FFE, séparé de l'architecture IA produit." />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: { colors: { ink:'#0b1220', panel:'#111a2e', edge:'#1f2b45', det:'#22c55e', llm:'#a855f7', warn:'#f59e0b', ok:'#38bdf8' }, fontFamily:{ sans:['Inter','system-ui','sans-serif'], mono:['ui-monospace','SFMono-Regular','Menlo','monospace'] } } } };
+</script>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({startOnLoad:true, securityLevel:'loose', theme:'base', themeVariables:{background:'#111a2e',primaryColor:'#1f2b45',primaryTextColor:'#e2e8f0',primaryBorderColor:'#38bdf8',lineColor:'#64748b',secondaryColor:'#0b1220',tertiaryColor:'#0b1220',fontSize:'13px'},flowchart:{curve:'basis',htmlLabels:true}});
+</script>
+<style>
+  body { background: radial-gradient(1200px 800px at 80% -10%, #16233d 0%, #0b1220 55%); }
+  .glass { background:rgba(17,26,46,.78); backdrop-filter:blur(8px); border:1px solid #1f2b45; }
+  .src { font-family:ui-monospace,monospace;font-size:.68rem;color:#7dd3fc;background:#0e1830;border:1px solid #1f2b45;padding:.05rem .35rem;border-radius:.3rem;white-space:nowrap; }
+  .mermaid { background:#0e1730;border:1px solid #1f2b45;border-radius:.75rem;padding:1rem;overflow-x:auto; }
+  .toc-link.active { color:#38bdf8;background:#0e1730;border-left-color:#38bdf8; }
+  @media print { aside{display:none!important} main{margin:0!important;max-width:100%!important} }
+</style>
+</head>
+<body class="text-slate-200 font-sans antialiased">
+<aside class="hidden lg:block fixed top-0 left-0 h-screen w-72 overflow-y-auto border-r border-edge bg-ink/80 backdrop-blur px-4 py-6">
+  <div class="text-xs uppercase tracking-widest text-slate-500 mb-1">POC FFE · décision séparée</div>
+  <h1 class="text-lg font-semibold text-white leading-tight mb-4">Workflow des agents de développement</h1>
+  <nav class="text-sm space-y-0.5">
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#intro">Mode d'emploi</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#pipeline">B1 · Idea → Ship</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#frontiere">B2 · Frontière déterministe</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#chaines">B3 · Chaînes de skills</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#reco">B4 · Recommandation</a>
+    <a class="block border-l-2 border-transparent px-3 py-1.5 rounded-r text-slate-400 hover:bg-panel" href="architecture-options.html">← Architecture produit</a>
+  </nav>
+  <div class="mt-6 pt-4 border-t border-edge text-xs text-slate-500 leading-relaxed">Cette page décrit comment construire le projet. Elle ne décide pas du pipeline IA livré par le produit.</div>
+</aside>
+
+<main class="lg:ml-72 max-w-5xl px-5 sm:px-8 py-10">
+  <section id="intro" class="scroll-mt-20">
+    <div class="text-xs uppercase tracking-widest text-slate-500 mb-2">Workflow des agents · 2026</div>
+    <h1 class="text-3xl sm:text-4xl font-bold text-white leading-tight">Idea → Ship, avec des sorties durables</h1>
+    <p class="mt-4 text-slate-300 leading-relaxed">Cette page traite une décision différente de l'architecture IA produit : comment les agents et les humains font évoluer le dépôt sans perdre les décisions, les tests et les garde-fous.</p>
+    <div class="mt-6 grid sm:grid-cols-3 gap-4">
+      <div class="glass rounded-xl p-4"><div class="text-det font-semibold text-sm">Déterministe</div><p class="text-xs text-slate-400 mt-2">Gates, documents de référence, validation humaine et tests.</p></div>
+      <div class="glass rounded-xl p-4"><div class="text-llm font-semibold text-sm">Agentique</div><p class="text-xs text-slate-400 mt-2">Grilling, recherche, synthèse, prototypage et implémentation.</p></div>
+      <div class="glass rounded-xl p-4"><div class="text-warn font-semibold text-sm">Trace</div><p class="text-xs text-slate-400 mt-2">Chaque décision résolue laisse un ADR, un ticket, un test ou un terme.</p></div>
+    </div>
+  </section>
+
+  <section id="pipeline" class="scroll-mt-20 mt-16 border-t border-edge pt-8">
+    <h2 class="text-2xl font-bold text-white">B1 · Pipeline « Idea → Ship »</h2>
+    <pre class="mermaid mt-5">flowchart LR
+  IDEA([idée floue]) --> G["grill-with-docs / grilling\ndomain-modeling"]
+  G --> RS[research]
+  G --> PR["prototype / handoff"]
+  RS --> SPEC[to-spec]
+  PR --> SPEC
+  SPEC --> TK[to-tickets]
+  TK --> IMPL["implement / implement-spec / tdd"]
+  IMPL --> CR[code-review]
+  CR --> PRR[pr]
+  PRR --> RETRO[retro]
+  classDef det fill:#0e3a22,stroke:#22c55e,color:#d1fae5;
+  classDef llm fill:#3b1d5e,stroke:#a855f7,color:#f3e8ff;
+  class G,RS,PR,SPEC,IMPL,CR,PRR llm;
+  class RETRO det;</pre>
+    <div class="grid md:grid-cols-2 gap-4 mt-5">
+      <div class="glass rounded-xl p-4"><h3 class="font-semibold text-white text-sm">On-ramps</h3><ul class="mt-2 text-sm text-slate-300 space-y-1 list-disc list-inside"><li>Issue brute → <code>triage</code></li><li>Comportement cassé → <code>diagnosing-bugs</code></li><li>Gros effort flou → <code>wayfinder</code></li><li>Santé du code → architecture + <code>codebase-design</code></li></ul><p class="mt-3"><span class="src">skill-index.md:96-103</span></p></div>
+      <div class="glass rounded-xl p-4"><h3 class="font-semibold text-white text-sm">Sorties durables</h3><ul class="mt-2 text-sm text-slate-300 space-y-1 list-disc list-inside"><li>Décision structurante → ADR</li><li>Vocabulaire → GLOSSARY</li><li>Découpage → ticket</li><li>Comportement → test</li><li>Changement livré → PR + review</li></ul><p class="mt-3"><span class="src">skill-index.md:105-112</span></p></div>
+    </div>
+  </section>
+
+  <section id="frontiere" class="scroll-mt-20 mt-16 border-t border-edge pt-8">
+    <h2 class="text-2xl font-bold text-white">B2 · Frontière déterministe vs agent</h2>
+    <div class="mt-5 grid md:grid-cols-2 gap-4">
+      <div class="glass rounded-xl p-5 border-l-2 border-det"><h3 class="font-semibold text-det text-sm">Gates de contrôle</h3><ul class="mt-3 text-sm text-slate-300 space-y-2 list-disc list-inside"><li>Ordre de lecture obligatoire.</li><li>Research avant ADR pour les zones ouvertes.</li><li>Validation utilisateur avant phase majeure.</li><li>Tests, lint, review et vérification des sources.</li><li>Pas de changement silencieux de technologie non négociable.</li></ul><p class="mt-4"><span class="src">AGENT_CONTEXT.md:5-18,42-86</span></p></div>
+      <div class="glass rounded-xl p-5 border-l-2 border-llm"><h3 class="font-semibold text-llm text-sm">Zone de jugement</h3><ul class="mt-3 text-sm text-slate-300 space-y-2 list-disc list-inside"><li>Grilling d'une idée ou d'un plan.</li><li>Recherche et synthèse de sources.</li><li>Prototypage d'une hypothèse.</li><li>Implémentation guidée par une spec.</li><li>Review et rédaction de PR.</li></ul><p class="mt-4 text-xs text-slate-400">La vitesse brute est sacrifiée si nécessaire pour protéger la cohérence du POC. <span class="src">adr/0001:11</span></p></div>
+    </div>
+    <div class="mt-5 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-4 text-sm text-cyan-100">Analogie utile avec le produit : les décisions critiques restent traçables et déterministes ; l'agentivité intervient derrière des gates et produit des artefacts vérifiables.</div>
+  </section>
+
+  <section id="chaines" class="scroll-mt-20 mt-16 border-t border-edge pt-8">
+    <h2 class="text-2xl font-bold text-white">B3 · Chaînes de skills</h2>
+    <div class="grid md:grid-cols-2 gap-4 mt-5">
+      <div class="glass rounded-xl p-4"><h3 class="font-semibold text-white text-sm">Configuration multi-service</h3><pre class="text-xs text-emerald-300 bg-ink rounded-lg p-3 mt-3 overflow-x-auto">python-configuration -> pydantic -> fastapi
+-> docker-compose-patterns -> security-and-hardening</pre><p class="text-xs text-slate-400 mt-3">Puis : <code>writing-for-agents → codebase-design → research → ADR → tdd</code>.</p></div>
+      <div class="glass rounded-xl p-4"><h3 class="font-semibold text-white text-sm">Feature substantielle</h3><pre class="text-xs text-emerald-300 bg-ink rounded-lg p-3 mt-3 overflow-x-auto">research si besoin -> to-spec -> to-tickets
+-> tdd -> implement -> code-review</pre><p class="text-xs text-slate-400 mt-3">Documentation : <code>domain-modeling → grilling/grill-with-docs</code>.</p></div>
+    </div>
+    <p class="mt-4"><span class="src">docs/agents/skill-index.md:133-161</span></p>
+  </section>
+
+  <section id="reco" class="scroll-mt-20 mt-16 border-t border-edge pt-8 pb-16">
+    <h2 class="text-2xl font-bold text-white">B4 · Recommandation workflow</h2>
+    <div class="mt-5 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-5"><span class="text-[.65rem] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-200 border border-cyan-500/40">Recommandé</span><p class="mt-3 text-sm text-slate-200">Conserver les gates déterministes actuels et réserver l'agentivité aux phases de grilling, recherche, prototypage et implémentation test-first. Toute décision résolue doit laisser une trace durable.</p><p class="mt-3 text-xs text-slate-400"><span class="src">AGENT_CONTEXT.md:42-74</span> <span class="src">skill-index.md:155-161</span></p></div>
+    <div class="mt-5 glass rounded-xl p-4 text-sm text-slate-300"><strong class="text-white">Séparation avec architecture-options.html.</strong> Cette page explique comment construire et maintenir le projet ; <a class="text-ok underline" href="architecture-options.html">l'autre page</a> explique ce que le produit doit livrer.</div>
+  </section>
+</main>
+<script>
+  const links=[...document.querySelectorAll('.toc-link')];
+  const ids=links.map(l=>l.getAttribute('href').slice(1));
+  const obs=new IntersectionObserver(entries=>entries.forEach(e=>{if(e.isIntersecting){links.forEach(l=>l.classList.remove('active'));const l=links.find(x=>x.getAttribute('href')==='#'+e.target.id);if(l)l.classList.add('active');}}),{rootMargin:'-20% 0px -70% 0px'});
+  ids.forEach(id=>{const el=document.getElementById(id);if(el)obs.observe(el);});
+</script>
+</body>
+</html>

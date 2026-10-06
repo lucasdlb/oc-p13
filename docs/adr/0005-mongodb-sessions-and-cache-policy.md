@@ -23,4 +23,3 @@ MongoDB endosse deux roles : persister les sessions de demonstration et cacher l
 - Les autres parametres MongoDB (base, timeouts, TTLs) vivent dans `config.toml` sous `[mongodb]` et sont valides par Pydantic.
 - `pymongo` devient une dependance du backend.
 - La reponse de `POST /api/analyze-position` gagne `session_id` et `cache` (statuts hit/miss/skipped) sans casser le contrat existant.
-- Le fichier `TODO.md` a la racine est un document de travail temporaire non autoritaire : `docs/PLAN.md` et `docs/DATA.md` restent les sources de verite.

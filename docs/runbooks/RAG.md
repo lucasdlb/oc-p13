@@ -9,6 +9,9 @@ fait pas partie du demarrage FastAPI et ne doit jamais etre lancee pendant une p
 - Pour NVIDIA : pilote hote compatible et NVIDIA Container Toolkit/CDI configure pour Docker.
 - `.env` peut definir `MILVUS_URI` et `OLLAMA_BASE_URL`; les parametres non secrets restent dans
   `config.toml`.
+- Le provider coach se choisit dans `config.toml` (`nvidia`, `ollama` ou `mistral`). Ajouter
+  uniquement le secret correspondant dans `.env` (`NVIDIA_API_KEY` ou `MISTRAL_API_KEY`). Pydantic
+  refuse un provider cloud sans son secret et refuse une cle cloud pour Ollama.
 
 Verifier les configurations sans demarrer de service :
 
@@ -179,10 +182,45 @@ Ce qu'il faut lire dans `report.json` :
 - `current_context_hit_rate` : la prose courante attendue est-elle retrievee.
 - `secondary` : metriques de ranking, utiles pour comparer, insuffisantes seules.
 
+Semantique courante des labels de contexte :
+
+- `current_prose` : section attendue du noeud courant.
+- `parent_prose` : prose du parent direct, retrievee volontairement par le plan; ne compte pas comme
+  `false_current_line`.
+- `current_node_other_prose` : prose du bon noeud, mais hors section exacte gelee dans
+  `expected_context.current_prose`.
+- `allowed_child_prose` : prose d'enfant direct autorisee seulement pour les intentions de suite ou de
+  candidat specifique.
+- `false_current_line` : prose d'une autre ligne apres exclusion du courant, parent, enfant autorise et
+  descendant profond.
+
+Baseline acceptee pour le coach deterministe : run `20261004T150555741956Z` sur la collection
+`chess_knowledge_fdfff4354c1c_33d349ba87d3_a608853c1518` :
+`coach_usable_context_rate = 0.80`, `false_current_line_rate = 0.0`,
+`current_context_hit_rate = 0.60`, `child_context_hit_rate = 1.0`, et les pollutions
+`deep_descendant`, `history`, `misc` a `0.0`. Ne pas comparer `false_current_line` ou
+`coach_usable_context_rate` avec les runs anterieurs au changement de semantique sans le signaler.
+Ce run valide le cablage de `ConservativeCoachService` dans `/api/analyze-position` sans changement
+materiel des metriques de retrieval.
+
 Le runner echoue explicitement (code 2) si un cas rencontre `rag_store_unavailable` ou si aucun cas
 ne retrieve de document : une collection incompatibile ou une provenance erronee ne produit donc
 plus un rapport propre mais vide. La provenance est stricte : une collection sans `corpus` au
 manifeste, ou construite sur un autre snapshot, est refusee.
+
+## Coach Conservateur
+
+Le contrat d'entree du coach est `CoachContext` (`backend/app/services/retrieval_contracts.py`). Il
+separe la prose courante (`current_prose`) des continuations candidates (`candidate_continuations`) et
+porte les attributions source/licence par chunk.
+
+`ConservativeCoachService` (`backend/app/services/coach.py`) est deterministe :
+
+- La prose courante peut etre rendue comme affirmation sur la position actuelle.
+- La prose enfant doit rester conditionnelle, par exemple `Si les Noirs jouent ...Nf6`.
+- Une prose sans source URL, licence et page source produit un fallback au lieu d'une affirmation.
+- JEV peut rester un classifieur optionnel d'intention, mais la baseline coach est deterministe; toute
+  activation JEV doit etre mesuree comme A/B separe.
 
 ## Reindexation Et Publication
 

@@ -75,3 +75,7 @@ _Avoid_: recherche documentaire, lookup
 **Attribution de source**:
 Rattachement explicite d'une affirmation du coach a l'id de la source qui la justifie, valide cote backend avant affichage.
 _Avoid_: citation, reference bibliographique
+
+**Reference coach**:
+Marqueur structure dans la prose du coach qui decrit explicitement une intention UI : coup, case, ou suite de coups. Une reference coach est validee contre la position courante avant d'etre interactive.
+_Avoid_: coup detecte automatiquement, citation SAN

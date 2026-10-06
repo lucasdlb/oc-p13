@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="fr" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RAG System — POC FFE</title>
+<meta name="description" content="Description illustrée et précise de l'implémentation RAG du POC FFE : corpus, chunks, métadonnées, embeddings, Milvus, retrieval et contexte coach." />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ink: '#09111f', panel: '#101b30', edge: '#21304c',
+          source: '#38bdf8', clean: '#22c55e', vector: '#a78bfa',
+          query: '#f59e0b', coach: '#f472b6', danger: '#ef4444'
+        },
+        fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'], mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'] }
+      }
+    }
+  }
+</script>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    securityLevel: 'loose',
+    theme: 'base',
+    themeVariables: {
+      background: '#101b30', primaryColor: '#21304c', primaryTextColor: '#e2e8f0',
+      primaryBorderColor: '#38bdf8', lineColor: '#64748b', secondaryColor: '#09111f',
+      tertiaryColor: '#09111f', fontSize: '13px'
+    },
+    flowchart: { curve: 'basis', htmlLabels: true }
+  });
+</script>
+<style>
+  body { background: radial-gradient(1200px 800px at 80% -10%, #182c4b 0%, #09111f 58%); }
+  .glass { background: rgba(16,27,48,.78); backdrop-filter: blur(8px); border: 1px solid #21304c; }
+  .src { font-family: ui-monospace, monospace; font-size: .68rem; color: #7dd3fc; background: #0c1830; border: 1px solid #21304c; padding: .05rem .35rem; border-radius: .3rem; white-space: nowrap; }
+  .mermaid { background: #0d1930; border: 1px solid #21304c; border-radius: .75rem; padding: 1rem; overflow-x: auto; }
+  .code { background: #08101e; border: 1px solid #21304c; border-radius: .75rem; overflow-x: auto; }
+  .toc-link.active { color: #38bdf8; background: #0d1930; border-left-color: #38bdf8; }
+  @media print { aside { display: none !important; } main { margin: 0 !important; max-width: 100% !important; } }
+</style>
+</head>
+<body class="text-slate-200 font-sans antialiased">
+
+<aside class="hidden lg:block fixed top-0 left-0 h-screen w-72 overflow-y-auto border-r border-edge bg-ink/85 backdrop-blur px-4 py-6">
+  <div class="text-xs uppercase tracking-widest text-slate-500 mb-1">POC FFE · documentation technique</div>
+  <h1 class="text-lg font-semibold text-white leading-tight mb-4">RAG System</h1>
+  <nav class="text-sm space-y-0.5">
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#intro">0 · Vue d'ensemble</a>
+    <div class="pt-3 pb-1 text-xs uppercase tracking-wider text-slate-500">A · Ingestion</div>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#frontiere">A1 · Frontière des corpus</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#pipeline">A2 · Pipeline corpus → Milvus</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#chunk">A3 · Exemple chunk + métadonnées</a>
+    <div class="pt-3 pb-1 text-xs uppercase tracking-wider text-slate-500">B · Runtime</div>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#flux">B1 · Flux d'une requête</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#plan">B2 · Intention → RetrievalPlan</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#recherche">B3 · Recherche Milvus champ par champ</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#rerank">B4 · Reranking et contexte coach</a>
+    <div class="pt-3 pb-1 text-xs uppercase tracking-wider text-slate-500">C · Décisions</div>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#invariants">C1 · Invariants et fallbacks</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#pistes">C2 · Idées non implémentées</a>
+    <a class="toc-link block border-l-2 border-transparent px-3 py-1.5 rounded-r hover:bg-panel" href="#sources">C3 · Sources de vérité</a>
+  </nav>
+  <div class="mt-6 pt-4 border-t border-edge text-xs text-slate-500 leading-relaxed">
+    Cette page décrit l'implémentation présente dans le dépôt au 2026-10-06. Les badges <span class="src">actuel</span> et <span class="src">piste</span> distinguent le code livré des options futures.
+  </div>
+</aside>
+
+<main class="lg:ml-72 max-w-6xl px-5 sm:px-8 py-10">
+  <section id="intro" class="scroll-mt-20">
+    <div class="text-xs uppercase tracking-widest text-slate-500 mb-2">Architecture des données · phase R</div>
+    <h1 class="text-3xl sm:text-4xl font-bold text-white leading-tight">Le RAG du POC, du corpus au contexte coach</h1>
+    <p class="mt-4 text-slate-300 leading-relaxed max-w-4xl">
+      Le RAG actuel n'est pas une recherche vectorielle plate sur tous les textes d'échecs. Il est composé de deux
+      systèmes complémentaires : <strong>OpeningTree</strong> connaît la structure déterministe des ouvertures et borne
+      la zone pertinente ; <strong>Milvus</strong> retrouve la prose pédagogique par similarité sémantique. Le service
+      assemble ensuite les résultats en séparant la position courante, le parent et les suites candidates.
+    </p>
+    <div class="mt-6 grid md:grid-cols-4 gap-3">
+      <div class="glass rounded-xl p-4"><div class="text-source font-semibold text-sm">Source</div><p class="text-xs text-slate-400 mt-2">Wikibooks nettoyé, CC BY-SA. Prose uniquement.</p></div>
+      <div class="glass rounded-xl p-4"><div class="text-clean font-semibold text-sm">Structure</div><p class="text-xs text-slate-400 mt-2">OpeningTree et `eco_code` pour relier la prose à la position.</p></div>
+      <div class="glass rounded-xl p-4"><div class="text-vector font-semibold text-sm">Vectoriel</div><p class="text-xs text-slate-400 mt-2">Qwen3-Embedding-0.6B, 1024 dimensions, COSINE, HNSW.</p></div>
+      <div class="glass rounded-xl p-4"><div class="text-coach font-semibold text-sm">Sortie</div><p class="text-xs text-slate-400 mt-2">`RetrievedContext` attribué, puis coach déterministe ou LLM.</p></div>
+    </div>
+    <div class="mt-5 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
+      <strong>Point essentiel.</strong> `lichess-org/chess-openings` n'est pas vectorisé. Ses TSV alimentent l'arbre structuré,
+      le matching et la jointure `eco_code`. La prose Wikibooks est la matière indexée dans Milvus.
+      <span class="src">ADR 0006:19-33</span>
+    </div>
+  </section>
+
+  <section id="frontiere" class="scroll-mt-20 mt-16 border-t border-edge pt-8">
+    <h2 class="text-2xl font-bold text-white">A1 · Frontière exacte des données</h2>
+    <p class="text-slate-300 mt-3 text-sm leading-relaxed">Avant de suivre les étapes, il faut savoir ce qui entre dans chaque système et ce qui en est volontairement exclu.</p>
+    <div class="mt-5 grid md:grid-cols-2 gap-5">
+      <div class="glass rounded-xl p-5 border-l-2 border-source">
+        <h3 class="font-semibold text-source">Donnée structurée hors Milvus</h3>
+        <ul class="mt-3 text-sm text-slate-300 space-y-2 list-disc list-inside">
+          <li>Source : cinq TSV `chess-openings`.</li>
+          <li>Champs : `eco`, `name`, `pgn`.</li>
+          <li>Transformation : coups SAN → UCI, FEN/EPD, parents, enfants, profondeur.</li>
+          <li>Sortie : snapshot `OpeningTree` puis, à terme, collection MongoDB `openings`.</li>
+          <li>Usage runtime : identifier le noeud courant et ses enfants directs.</li>
+        </ul>
+        <p class="mt-4"><span class="src">adapters.py:49-79</span> <span class="src">ADR 0006:19-33</span></p>
+      </div>
+      <div class="glass rounded-xl p-5 border-l-2 border-vector">
+        <h3 class="font-semibold text-vector">Prose indexée dans Milvus</h3>
+        <ul class="mt-3 text-sm text-slate-300 space-y-2 list-disc list-inside">
+          <li>Source actuelle : pages Wikibooks Chess Opening Theory.</li>
+          <li>Nettoyage : templates, tables, références, navigation et markup résiduel retirés.</li>
+          <li>Granularité par défaut : une section, sans overlap.</li>
+          <li>Enrichissement : page, section, intention, côté, ouverture et noeud OpeningTree.</li>
+          <li>Sortie : texte + vecteur + métadonnées + attribution/licence.</li>
+        </ul>
+        <p class="mt-4"><span class="src">adapters.py:91-126</span> <span class="src">DATA.md:107-149</span></p>
+      </div>
+    </div>
+    <div class="mt-5 code p-4 text-sm font-mono text-slate-300">
+      <div class="text-slate-500">// séparation de responsabilité</div>
+      <div><span class="text-source">chess-openings</span> → OpeningTree → <span class="text-clean">position / enfants / contraintes</span></div>
+      <div><span class="text-source">Wikibooks prose</span> → chunks → embeddings → <span class="text-vector">Milvus</span></div>
+      <div><span class="text-clean">contraintes OpeningTree</span> + <span class="text-vector">similarité Milvus</span> → <span class="text-coach">contexte coach</span></div>
+    </div>
+  </section>
+
+  <section id="pipeline" class="scroll-mt-20 mt-16 border-t border-edge pt-8">
+    <h2 class="text-2xl font-bold text-white">A2 · Pipeline corpus → Milvus</h2>
+    <p class="text-slate-300 mt-3 text-sm leading-relaxed">L'ingestion est offline. Elle ne se lance pas pendant une partie et le démarrage FastAPI ne télécharge ni ne vectorise le corpus.</p>
+    <pre class="mermaid mt-5">flowchart LR
+  T["TSV chess-openings\neco / name / pgn"] --> OT["OpeningTree\nsnapshot structure"]
+  W["Pages Wikibooks\nwikitext brut"] --> F["fetch_corpus\nmanifest"]
+  OT --> M["mapping déterministe\npage → noeud / ECO"]
+  F --> C["WikibooksAdapter\nsections + prose nettoyée"]
+  C --> M
+  M --> K["chunk_source\nsection, 16 000 octets UTF-8\npart_index"]
+  K --> E["Qwen3 embedding\n1024 floats"]
+  E --> U["EmbeddedChunk\ntexte + vecteur + metadata"]
+  U --> V["Milvus chess_knowledge\nCOSINE + HNSW"]
+  V --> X["manifest + snapshot hash\ncollection immutable"]
+  classDef source fill:#12344a,stroke:#38bdf8,color:#e0f2fe;
+  classDef clean fill:#123b28,stroke:#22c55e,color:#dcfce7;
+  classDef vector fill:#35245f,stroke:#a78bfa,color:#f5f3ff;
+  class T,W source;
+  class OT,F,M,C,K,X clean;
+  class E,U,V vector;</pre>
+    <div class="mt-5 grid md:grid-cols-3 gap-4">
+      <div class="glass rounded-xl p-4"><div class="text-xs uppercase text-slate-500">Étape 1 · découvrir</div><p class="text-sm text-slate-300 mt-2">`fetch_corpus` récupère ou réutilise les cinq TSV et les treize pages Wikibooks curées. Le manifest décrit la provenance.</p><p class="mt-3"><span class="src">RAG-RUNBOOK.md:59-81</span></p></div>
+      <div class="glass rounded-xl p-4"><div class="text-xs uppercase text-slate-500">Étape 2 · nettoyer</div><p class="text-sm text-slate-300 mt-2">`WikibooksAdapter` extrait les sections, conserve les titres et paragraphes pédagogiques, rejette une page vide ou avec markup interdit.</p><p class="mt-3"><span class="src">adapters.py:143-236</span></p></div>
+      <div class="glass rounded-xl p-4"><div class="text-xs uppercase text-slate-500">Étape 3 · mapper</div><p class="text-sm text-slate-300 mt-2">Le titre canonique est parsé en coups SAN légaux puis résolu par chemin exact, transposition, ancêtre ou `unmapped`.</p><p class="mt-3"><span class="src">opening_mapper.py:107-138</span></p></div>
+    </div>
+    <div class="mt-5 rounded-xl border border-green-500/30 bg-green-500/5 p-4 text-sm text-slate-300">
+      <strong class="text-clean">Pourquoi le pipeline est versionné.</strong> Le hash de snapshot inclut le contenu et les métadonnées significatives. Le manifeste Milvus vérifie version de schéma, modèle, dimension, métrique, index et format. Un changement de cleaner, chunking, texte ou métadonnées crée une nouvelle cible ; les anciennes collections ne sont pas supprimées avant validation.
+      <p class="mt-2"><span class="src">pipeline.py:44-159</span> <span class="src">milvus.py:354-429</span></p>
+    </div>
+    <div class="mt-4 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4 text-sm text-slate-300">
+      <strong class="text-source">Trois tailles à ne pas confondre.</strong> La démo phase R utilise un corpus curé de 13 pages / 52 sections ; le corpus Wikibooks complet du manifest contient 3 088 pages ; Eval V2 utilise une collection issue du snapshot complet. Les 13 requêtes du golden set sont un jeu d'évaluation, pas la taille du corpus.
+      <p class="mt-2"><span class="src">.scratch/rag/corpus/wikibooks-full/manifest.json</span> <span class="src">experiments/rag/golden_set.json</span> <span class="src">RAG-RUNBOOK.md:70-81</span></p>
+    </div>
+  </section>
+
+  <section id="chunk" class="scroll-mt-20 mt-16 border-t border-edge pt-8">
+    <h2 class="text-2xl font-bold text-white">A3 · Exemple : une page devient un chunk</h2>
+    <p class="text-slate-300 mt-3 text-sm leading-relaxed">Exemple illustratif sur la page Ruy Lopez. Le texte exact varie selon le snapshot ; le schéma et les transformations sont ceux du code.</p>
+    <div class="mt-5 grid lg:grid-cols-2 gap-5">
+      <div>
+        <div class="text-xs uppercase tracking-wider text-source mb-2">Entrée après nettoyage</div>
+        <pre class="code p-4 text-xs leading-relaxed whitespace-pre-wrap text-slate-300">page_title = "Chess Opening Theory/Ruy Lopez"
+source = "wikibooks-chess-opening-theory"
+section_title = "Ideas"
+text = "Ruy Lopez
+
+White develops the bishop to b5 and puts pressure on e5...
+The plans depend on how Black protects the e5-pawn."
+license = "CC BY-SA 4.0"</pre>
+        <p class="mt-2"><span class="src">ChunkSource</span> <span class="src">chunker.py:51-67</span></p>
+      </div>
+      <div>
+        <div class="text-xs uppercase tracking-wider text-vector mb-2">Sortie logique `KnowledgeChunk`</div>
+        <pre class="code p-4 text-xs leading-relaxed whitespace-pre-wrap text-slate-300">{
+  "id": "sha256(source + text)",
+  "text": "Ruy Lopez\n\nIdeas\n\nWhite develops...",
+  "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/Ruy Lopez",
+  "canonical_title": "Chess Opening Theory/Ruy Lopez",
+  "section_title": "Ideas",
+  "section_index": 1,
+  "part_index": 0,
+  "source": "wikibooks-chess-opening-theory",
+  "source_url": "https://en.wikibooks.org/wiki/...",
+  "license_or_terms": "CC BY-SA 4.0",
+  "eco_code": "C60",
+  "opening_name": "Ruy Lopez",
+  "opening_node_id": "c60-...",
+  "intent": "misc",
+  "side": null,
+  "is_history": false,
+  "is_misc": false,
+  "created_at": "..."
+}</pre>
+        <p class="mt-2"><span class="src">chunker.py:73-128</span> <span class="src">knowledge.py</span></p>
+      </div>
+    </div>
+    <div class="mt-5 overflow-x-auto glass rounded-xl">
+      <table class="w-full text-sm">
+        <thead class="text-left text-slate-400 text-xs uppercase tracking-wider"><tr class="border-b border-edge"><th class="px-4 py-3">Famille</th><th class="px-4 py-3">Champs</th><th class="px-4 py-3">Rôle pendant la recherche</th></tr></thead>
+        <tbody class="divide-y divide-edge text-slate-300">
+          <tr><td class="px-4 py-3 text-source">Identité</td><td class="px-4 py-3 font-mono text-xs">id, page_id, canonical_title, section_index, part_index</td><td class="px-4 py-3">déduplication, reconstruction de page et ordre de lecture.</td></tr>
+          <tr><td class="px-4 py-3 text-source">Provenance</td><td class="px-4 py-3 font-mono text-xs">source, source_url, license_or_terms, created_at</td><td class="px-4 py-3">attribution, licence et refus d'une affirmation non sourcée.</td></tr>
+          <tr><td class="px-4 py-3 text-clean">Ouverture</td><td class="px-4 py-3 font-mono text-xs">eco_code, opening_name, opening_node_id, line_pgn</td><td class="px-4 py-3">jointure OpeningTree, filtre de noeud, contexte courant/enfant/parent.</td></tr>
+          <tr><td class="px-4 py-3 text-clean">Pédagogie</td><td class="px-4 py-3 font-mono text-xs">section_title, intent, side, is_history, is_misc</td><td class="px-4 py-3">exclure history/misc par défaut et préserver l'intention du passage.</td></tr>
+          <tr><td class="px-4 py-3 text-vector">Calcul</td><td class="px-4 py-3 font-mono text-xs">vector[1024]</td><td class="px-4 py-3">similarité COSINE ; jamais affiché directement au coach.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="mt-5 grid md:grid-cols-3 gap-4">
+      <div class="glass rounded-xl p-4"><h3 class="text-sm font-semibold text-clean">Budget UTF-8</h3><p class="text-xs text-slate-400 mt-2">Une section trop longue est découpée en parties ordonnées. Une page trop longue en mode `page` est rejetée, pas tronquée.</p></div>
+      <div class="glass rounded-xl p-4"><h3 class="text-sm font-semibold text-clean">Sans overlap</h3><p class="text-xs text-slate-400 mt-2">Le chunker ne duplique pas les mots entre chunks. `page_id`, `section_index` et `part_index` permettent de reconstituer.</p></div>
+      <div class="glass rounded-xl p-4"><h3 class="text-sm font-semibold text-clean">ID idempotent</h3><p class="text-xs text-slate-400 mt-2">Le même `source + text` produit le même ID SHA-256 ; l'ingestion peut vérifier, reprendre et réutiliser.</p></div>
+    </div>
+  </section>
+
+  <section id="flux" class="scroll-mt-20 mt-16 border-t border-edge pt-8">
+    <h2 class="text-2xl font-bold text-white">B1 · Flux d'une requête runtime</h2>
+    <p class="text-slate-300 mt-3 text-sm leading-relaxed">Exemple : l'utilisateur joue <code>1. e4 e5 2. Nf3 Nc6 3. Bb5</code> et demande « Pourquoi ce coup et quel est le plan ? ».</p>
+    <pre class="mermaid mt-5">sequenceDiagram
+  participant UI as Angular
+  participant API as FastAPI / analysis
+  participant OT as OpeningTree
+  participant IR as IntentRouter
+  participant RP as RetrievalPlanBuilder
+  participant E as EmbeddingProvider
+  participant M as Milvus
+  participant R as RagService
+  participant C as Coach
+  UI->>API: FEN + moves + level + question
+  API->>OT: context_for_position(moves, fen)
+  OT-->>API: current Ruy Lopez + parent + direct children
+  API->>IR: question + level + legal child moves
+  IR-->>API: explain_current_position, confidence 0.68
+  API->>RP: tree_context + IntentDecision
+  RP-->>API: buckets current(4) + parent(1), descendants excluded
+  API->>R: retrieve(plan, question)
+  R->>E: embed_query(instruction + question)
+  E-->>R: vector 1024 floats
+  R->>M: search(vector, k, metadata filters)
+  M-->>R: ScoredChunk + COSINE distance
+  R->>R: boost current, penalize parent, exclude history/misc/deep
+  R-->>API: RetrievedContext attribués + diagnostics
+  API->>C: position + prose + facts + sources
+  C-->>UI: explication coach sourcée</pre>
+    <div class="mt-5 grid md:grid-cols-2 gap-5">
+      <div class="glass rounded-xl p-5 border-l-2 border-query">
+        <h3 class="font-semibold text-query">Embedding de requête</h3>
+        <p class="text-sm text-slate-300 mt-2">Le provider ne vectorise pas seulement la chaîne brute : il préfixe la question avec l'instruction configurée Qwen3, par exemple `Instruct: ...\nQuery: Pourquoi ce coup...`.</p>
+        <p class="mt-3"><span class="src">embeddings.py:74-76</span></p>
+      </div>
+      <div class="glass rounded-xl p-5 border-l-2 border-vector">
+        <h3 class="font-semibold text-vector">Recherche Milvus</h3>
+        <p class="text-sm text-slate-300 mt-2">Milvus reçoit le vecteur, une limite par bucket, un filtre metadata et `min_score`. Il renvoie les champs de sortie nécessaires pour construire un `ScoredChunk`.</p>
+        <p class="mt-3"><span class="src">milvus.py:178-210</span></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="plan" class="scroll-mt-20 mt-16 border-t border-edge pt-8">
+    <h2 class="text-2xl font-bold text-white">B2 · Question → intention → RetrievalPlan</h2>
+    <p class="text-slate-300 mt-3 text-sm leading-relaxed">Le routeur ne choisit pas librement une collection ni un rayon de recherche. Il produit une intention ; le builder déterministe traduit cette intention en buckets et budgets.</p>
+    <div class="mt-5 grid lg:grid-cols-2 gap-5">
+      <div class="glass rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-query">Décision d'intention</h3>
+        <div class="mt-3 space-y-2 text-sm">
+          <div class="flex justify-between gap-3 border-b border-edge pb-2"><code>« pourquoi ce coup ? »</code><span class="text-clean">explain_current_position</span></div>
+          <div class="flex justify-between gap-3 border-b border-edge pb-2"><code>« que jouer ensuite ? »</code><span class="text-clean">ask_next_moves</span></div>
+          <div class="flex justify-between gap-3 border-b border-edge pb-2"><code>« que se passe-t-il après ...Nf6 ? »</code><span class="text-clean">ask_specific_candidate</span></div>
+          <div class="flex justify-between gap-3 border-b border-edge pb-2"><code>« raconte l'histoire »</code><span class="text-clean">ask_history</span></div>
+          <div class="flex justify-between gap-3"><code>question vide / confiance faible</code><span class="text-amber-300">current-only conservateur</span></div>
+        </div>
+        <p class="mt-4"><span class="src">intent_router.py:156-254</span></p>
+      </div>
+      <div class="glass rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-clean">Exemple de plan produit</h3>
+        <pre class="code mt-3 p-4 text-xs leading-relaxed text-slate-300">{
+  "intent": "explain_current_position",
+  "state": "matched",
+  "reason": "current_position",
+  "buckets": [
+    {
+      "name": "current",
+      "relation_to_position": "current",
+      "node_ids": ["ruy-lopez-node"],
+      "eco_code": "C60",
+      "limit": 4
+    },
+    {
+      "name": "parent",
+      "relation_to_position": "parent",
+      "node_ids": ["before-bb5"],
+      "eco_code": "C60",
+      "limit": 1,
+      "query_hint": "sparse parent context"
+    }
+  ],
+  "excluded_node_ids": ["deep-variant-..."]
+}</pre>
+        <p class="mt-3"><span class="src">retrieval_plan_builder.py:51-70</span> <span class="src">retrieval_contracts.py:94-127</span></p>
+      </div>
+    </div>
+    <div class="mt-5 rounded-xl border border-fuchsia-500/30 bg-fuchsia-500/5 p-4 text-sm text-slate-300">
+      <strong class="text-fuchsia-300">Pourquoi le bucket est important.</strong> Un top-k global pourrait retourner un chunk Berlin profond parce que les mots « Ruy Lopez » se ressemblent. Le bucket encode la relation au noeud courant ; le coach peut ensuite dire « si les Noirs jouent ...Nf6 » au lieu de présenter la Berlin comme la position déjà jouée.
+      <p class="mt-2"><span class="src">DATA.md:137</span> <span class="src">retrieval_plan_builder.py:73-118</span></p>
+    </div>
+  </section>
+
+  <section id="recherche" class="scroll-mt-20 mt-16 border-t border-edge pt-8">
+    <h2 class="text-2xl font-bold text-white">B3 · Recherche Milvus, champ par champ</h2>
+    <p class="text-slate-300 mt-3 text-sm leading-relaxed">Pour le plan courant + parent, deux recherches sont exécutées dans la boucle des buckets. Le vecteur est le même ; le filtre et la limite changent.</p>
+    <div class="mt-5 code p-5 text-xs sm:text-sm font-mono leading-relaxed">
+      <div><span class="text-slate-500"># current bucket</span></div>
+      <div><span class="text-query">vector</span> = embed_query(question)</div>
+      <div><span class="text-query">k</span> = 4</div>
+      <div><span class="text-query">filter</span> = opening_node_id == "ruy-lopez-node"</div>
+      <div>  and intent not in ["history", "misc"]</div>
+      <div>  and is_history == false and is_misc == false</div>
+      <div><span class="text-query">search_params</span> = metric COSINE, HNSW ef = max(search_ef, k)</div>
+      <div class="mt-3"><span class="text-slate-500"># parent bucket</span></div>
+      <div><span class="text-query">k</span> = 1</div>
+      <div><span class="text-query">filter</span> = opening_node_id == "before-bb5"</div>
+      <div>  and intent not in ["history", "misc"]</div>
+    </div>
+    <div class="mt-5 overflow-x-auto glass rounded-xl">
+      <table class="w-full text-sm">
+        <thead class="text-left text-slate-400 text-xs uppercase tracking-wider"><tr class="border-b border-edge"><th class="px-4 py-3">Champ / paramètre</th><th class="px-4 py-3">Valeur actuelle</th><th class="px-4 py-3">Effet</th><th class="px-4 py-3">Source</th></tr></thead>
+        <tbody class="divide-y divide-edge text-slate-300">
+          <tr><td class="px-4 py-3 font-mono">vector</td><td class="px-4 py-3">1024 floats, query instruction</td><td class="px-4 py-3">similarité sémantique avec le texte des chunks</td><td class="px-4 py-3"><span class="src">embeddings.py:74-76</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono">limit / k</td><td class="px-4 py-3">par bucket : 4, 3, 2 ou 1</td><td class="px-4 py-3">budget de candidats, pas un top-k global aveugle</td><td class="px-4 py-3"><span class="src">retrieval_contracts.py:66-77</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono">opening_node_id</td><td class="px-4 py-3">current / child / parent</td><td class="px-4 py-3">borne la recherche à la fenêtre OpeningTree</td><td class="px-4 py-3"><span class="src">milvus.py:84-105</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono">eco_code</td><td class="px-4 py-3">C60 si nécessaire</td><td class="px-4 py-3">fallback de jointure quand le mapping par noeud ne renvoie rien</td><td class="px-4 py-3"><span class="src">rag.py:126-148</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono">intent / is_history / is_misc</td><td class="px-4 py-3">history/misc exclus par défaut</td><td class="px-4 py-3">évite une pollution historique ou navigationnelle sauf question explicite</td><td class="px-4 py-3"><span class="src">rag.py:161-194</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono">min_score</td><td class="px-4 py-3"><code>config.toml</code> : <code>min_score = 0.0</code>, converti en <code>None</code> effectif</td><td class="px-4 py-3">aucun filtrage de score aujourd'hui ; à calibrer surtout pour les buckets fallback/généraux</td><td class="px-4 py-3"><span class="src">settings.py:71</span> <span class="src">eval_v2/retrieve.py:83</span></td></tr>
+          <tr><td class="px-4 py-3 font-mono">output_fields</td><td class="px-4 py-3">id + texte + metadata</td><td class="px-4 py-3">permet provenance, relation, licence et affichage coach</td><td class="px-4 py-3"><span class="src">milvus.py:189-199</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="mt-5 grid md:grid-cols-3 gap-4">
+      <div class="glass rounded-xl p-4 border-l-2 border-clean"><h3 class="text-sm font-semibold text-clean">Chemin primaire</h3><p class="text-xs text-slate-400 mt-2">Recherche par `opening_node_id` + page/intention. C'est la contrainte la plus précise.</p></div>
+      <div class="glass rounded-xl p-4 border-l-2 border-query"><h3 class="text-sm font-semibold text-query">Dégradation contrôlée</h3><p class="text-xs text-slate-400 mt-2">Si aucun résultat et qu'un ECO existe, nouvelle recherche bornée par ECO, puis fallback ECO plus large.</p></div>
+      <div class="glass rounded-xl p-4 border-l-2 border-danger"><h3 class="text-sm font-semibold text-danger">Échec visible</h3><p class="text-xs text-slate-400 mt-2">Embedding indisponible → `rag_embedding_unavailable`; Milvus indisponible → `rag_store_unavailable`.</p></div>
+    </div>
+  </section>
+
+  <section id="rerank" class="scroll-mt-20 mt-16 border-t border-edge pt-8">
+    <h2 class="text-2xl font-bold text-white">B4 · Reranking, déduplication et contexte coach</h2>
+    <p class="text-slate-300 mt-3 text-sm leading-relaxed">Le score Milvus n'est pas le score final. `RagService` applique une politique relationnelle avant de transmettre les passages.</p>
+    <pre class="mermaid mt-5">flowchart TD
+  H["ScoredChunk\nscore COSINE + metadata"] --> X{"exclusion ?"}
+  X -- "descendant exclu / hors bucket" --> D["diagnostic excluded"]
+  X -- non --> B{"relation"}
+  B -- current --> C["score + 0.40"]
+  B -- child + candidate --> CC["score + 0.25"]
+  B -- child + current --> CP["score - 0.20"]
+  B -- parent --> P["score - 0.25"]
+  C --> R["tri score reranked"]
+  CC --> R
+  CP --> R
+  P --> R
+  R --> U["dédup chunk_id + page/section/part"]
+  U --> O["RetrievedContext\nsource + licence + relation + entry_move"]
+  classDef input fill:#35245f,stroke:#a78bfa,color:#f5f3ff;
+  classDef rule fill:#123b28,stroke:#22c55e,color:#dcfce7;
+  classDef output fill:#4a1d3b,stroke:#f472b6,color:#fce7f3;
+  class H input;
+  class X,B,C,CC,CP,P,R,U rule;
+  class D,O output;</pre>
+    <div class="mt-5 grid lg:grid-cols-2 gap-5">
+      <div class="glass rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-clean">Règles de score actuelles</h3>
+        <div class="mt-3 space-y-2 text-sm text-slate-300 font-mono">
+          <div class="flex justify-between border-b border-edge pb-2"><span>current</span><span class="text-green-300">+0.40</span></div>
+          <div class="flex justify-between border-b border-edge pb-2"><span>child + ask_specific_candidate</span><span class="text-green-300">+0.25</span></div>
+          <div class="flex justify-between border-b border-edge pb-2"><span>child + explain_current_position</span><span class="text-amber-300">-0.20</span></div>
+          <div class="flex justify-between"><span>parent</span><span class="text-amber-300">-0.25</span></div>
+        </div>
+        <p class="mt-4 text-xs text-slate-400">Les exclusions arrivent avant le ranking : descendant explicitement exclu, noeud hors bucket, history/misc non demandés.</p>
+        <p class="mt-3"><span class="src">rag.py:204-261</span></p>
+        <p class="mt-3 text-xs text-amber-300">Les constantes ± sont une politique inter-buckets : le bonus est uniforme à l'intérieur d'un bucket et préserve donc son ordre cosine. Une ablation boost vs sans boost reste nécessaire avant de figer ces valeurs.</p>
+      </div>
+      <div class="glass rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-coach">Contrat transmis au coach</h3>
+        <pre class="code mt-3 p-4 text-xs leading-relaxed text-slate-300">{
+  "chunk_id": "...",
+  "text": "...",
+  "source": "wikibooks-chess-opening-theory",
+  "source_url": "https://en.wikibooks.org/wiki/...",
+  "license_or_terms": "CC BY-SA 4.0",
+  "page_id": "...::Ruy Lopez",
+  "section_title": "Ideas",
+  "score": 0.812,
+  "relation_to_position": "current",
+  "entry_move": null,
+  "opening_node_id": "ruy-lopez-node",
+  "eco_code": "C60",
+  "is_history": false,
+  "is_misc": false
+}</pre>
+        <p class="mt-3"><span class="src">retrieval_contracts.py:218-240</span> <span class="src">RAG-RUNBOOK.md:208-220</span></p>
+      </div>
+    </div>
+    <div class="mt-5 rounded-xl border border-pink-500/30 bg-pink-500/5 p-4 text-sm text-slate-300">
+      <strong class="text-coach">Conséquence pédagogique.</strong> Un chunk `child` conserve `entry_move`. Il peut expliquer une suite possible, mais ne doit pas être reformulé comme un fait de la position courante. Le coach déterministe vérifie également l'URL, la licence et la page source ; sinon il passe en fallback au lieu d'affirmer.
+    </div>
+    <div class="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-slate-300">
+      <strong class="text-amber-300">Cible de refactor.</strong> Remplacer les constantes par un tri lexicographique explicite : priorité du bucket, puis score cosine décroissant. Cela exprime la politique actuelle sans dépendre d'une magnitude arbitraire ; l'ablation mesurera si cette priorité améliore réellement le contexte coach.
+      <span class="src">ADR 0011</span>
+    </div>
+  </section>
+
+  <section id="invariants" class="scroll-mt-20 mt-16 border-t border-edge pt-8">
+    <h2 class="text-2xl font-bold text-white">C1 · Invariants, limites et fallbacks</h2>
+    <div class="mt-5 overflow-x-auto glass rounded-xl">
+      <table class="w-full text-sm">
+        <thead class="text-left text-slate-400 text-xs uppercase tracking-wider"><tr class="border-b border-edge"><th class="px-4 py-3">Invariant</th><th class="px-4 py-3">Implémentation actuelle</th><th class="px-4 py-3">Dégradation</th></tr></thead>
+        <tbody class="divide-y divide-edge text-slate-300">
+          <tr><td class="px-4 py-3">Une collection cohérente</td><td class="px-4 py-3">manifeste exact : schéma, modèle, dimension, COSINE, HNSW, format</td><td class="px-4 py-3">erreur fail-closed, nouvelle collection requise</td></tr>
+          <tr><td class="px-4 py-3">Provenance obligatoire</td><td class="px-4 py-3">URL, licence, page et source suivent le chunk</td><td class="px-4 py-3">coach conservateur plutôt qu'une affirmation non sourcée</td></tr>
+          <tr><td class="px-4 py-3">Milvus indisponible</td><td class="px-4 py-3">RagService retourne contexte vide + raison</td><td class="px-4 py-3">`fallbacks_used` / coach moins contextualisé, analyse non bloquée</td></tr>
+          <tr><td class="px-4 py-3">Embedding indisponible</td><td class="px-4 py-3">pas de requête vectorielle</td><td class="px-4 py-3">`rag_embedding_unavailable` explicite</td></tr>
+          <tr><td class="px-4 py-3">Corpus hors théorie</td><td class="px-4 py-3">plan sans bucket de prose ou fallback conservateur</td><td class="px-4 py-3">Stockfish peut être requis séparément, mais le RAG n'invente pas de contexte</td></tr>
+          <tr><td class="px-4 py-3">Reprise ingestion</td><td class="px-4 py-3">`full`, `incremental`, `resume`, réutilisation de vecteurs compatibles</td><td class="px-4 py-3">aucune suppression destructive du prédécesseur</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="mt-5 grid md:grid-cols-3 gap-4">
+      <div class="glass rounded-xl p-4"><h3 class="text-sm font-semibold text-vector">Mesure technique</h3><p class="text-xs text-slate-400 mt-2">Phase R : 13 pages / 52 sections, 13 requêtes jugées. Hit@5 1.000 est saturé sur ce corpus réduit ; MRR 0.756 et nDCG@5 0.552 décrivent mieux l'ordre.</p><p class="mt-3"><span class="src">ADR 0006:35-58</span></p></div>
+      <div class="glass rounded-xl p-4"><h3 class="text-sm font-semibold text-vector">Performance mesurée</h3><p class="text-xs text-slate-400 mt-2">Baseline GPU : embedding p50 37.3 ms, recherche p50 6.3 ms, total p50 45.0 ms sur le run de référence.</p><p class="mt-3"><span class="src">ADR 0006:73-98</span></p></div>
+      <div class="glass rounded-xl p-4"><h3 class="text-sm font-semibold text-amber-300">Attention aux métriques</h3><p class="text-xs text-slate-400 mt-2">Le harness vectoriel nu ne teste ni IntentRouter, ni RetrievalPlan, ni les exclusions. Eval V2 juge le contexte utilisable par le coach.</p><p class="mt-3"><span class="src">RAG-RUNBOOK.md:121-145</span></p></div>
+    </div>
+  </section>
+
+  <section id="pistes" class="scroll-mt-20 mt-16 border-t border-edge pt-8">
+    <h2 class="text-2xl font-bold text-white">C2 · Idées RAG mentionnées mais non implémentées</h2>
+    <p class="text-slate-300 mt-3 text-sm leading-relaxed">Ces options existent dans les documents du projet. Elles ne doivent pas être lues comme faisant partie du flux décrit ci-dessus.</p>
+    <div class="mt-5 overflow-x-auto glass rounded-xl">
+      <table class="w-full text-sm">
+        <thead class="text-left text-slate-400 text-xs uppercase tracking-wider"><tr class="border-b border-edge"><th class="px-4 py-3">Piste</th><th class="px-4 py-3">Implémentation différente</th><th class="px-4 py-3">Bénéfice</th><th class="px-4 py-3">État</th></tr></thead>
+        <tbody class="divide-y divide-edge text-slate-300">
+          <tr><td class="px-4 py-3 font-semibold">RAG agentique / LangGraph</td><td class="px-4 py-3">Le graphe déciderait de rechercher, élargir ou itérer ; aujourd'hui `RagService` reste impératif et le plan est borné avant Milvus.</td><td class="px-4 py-3">investigation adaptative et multi-outils</td><td class="px-4 py-3 text-amber-300">reporté / ADR 0006</td></tr>
+          <tr><td class="px-4 py-3 font-semibold">JEV / System One</td><td class="px-4 py-3">Classifieur externe typé pour l'intention ; fallback rule-based si erreur ou confiance < 0.5.</td><td class="px-4 py-3">routage externe à comparer avec les règles</td><td class="px-4 py-3 text-amber-300">mesuré, inférieur sur le run A/B actuel</td></tr>
+          <tr><td class="px-4 py-3 font-semibold">Traduction à l'ingestion</td><td class="px-4 py-3">Traduire et indexer une copie française des passages au lieu de compter sur l'embedding multilingue anglais → français.</td><td class="px-4 py-3">meilleure couverture linguistique possible, coût et provenance supplémentaires</td><td class="px-4 py-3 text-amber-300">option B ouverte</td></tr>
+          <tr><td class="px-4 py-3 font-semibold">Corpus français natif</td><td class="px-4 py-3">Nouvelle source et nouvel adaptateur, avec validation licence et attribution.</td><td class="px-4 py-3">prose directement adaptée au coach français</td><td class="px-4 py-3 text-amber-300">option C ouverte</td></tr>
+          <tr><td class="px-4 py-3 font-semibold">Études Lichess</td><td class="px-4 py-3">Ingérer des cours/parties annotés via un adaptateur séparé, au lieu de Wikibooks.</td><td class="px-4 py-3">matériel pédagogique et parties commentées plus riches</td><td class="px-4 py-3 text-amber-300">hors POC, validation UGC/licence requise</td></tr>
+          <tr><td class="px-4 py-3 font-semibold">Parties célèbres comme contexte</td><td class="px-4 py-3">Récupérer `topGames`, puis PGN `/masters/pgn/{gameId}` et créer un contexte RAG attribué.</td><td class="px-4 py-3">illustrer un coup par une partie réelle</td><td class="px-4 py-3 text-amber-300">non implémenté</td></tr>
+          <tr><td class="px-4 py-3 font-semibold">Granularité `page`</td><td class="px-4 py-3">Un vecteur par page au lieu d'un vecteur par section ; reconstruction et contexte plus larges.</td><td class="px-4 py-3">contexte complet, moins de fragments</td><td class="px-4 py-3 text-amber-300">axe de configuration / à revalider corpus large</td></tr>
+          <tr><td class="px-4 py-3 font-semibold">Lichess Cloud Eval</td><td class="px-4 py-3">Ce n'est pas du RAG prose : lookup d'évaluations pré-calculées, puis fallback Stockfish local.</td><td class="px-4 py-3">PV profondes et voie rapide sur positions couvertes</td><td class="px-4 py-3 text-amber-300">adjacent, non implémenté</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="mt-5 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
+      <strong>Décision actuelle.</strong> Stabiliser d'abord le corpus, le mapping OpeningTree, les filtres metadata et Eval V2. Toute variante qui change le corpus, le modèle d'embeddings, le plan de retrieval ou les licences doit être mesurée et documentée avant de devenir le chemin principal.
+    </div>
+  </section>
+
+  <section id="sources" class="scroll-mt-20 mt-16 border-t border-edge pt-8 pb-16">
+    <h2 class="text-2xl font-bold text-white">C3 · Sources de vérité</h2>
+    <div class="mt-5 grid md:grid-cols-2 gap-4">
+      <div class="glass rounded-xl p-4"><h3 class="font-semibold text-source">Architecture et données</h3><p class="text-sm text-slate-300 mt-2"><span class="src">docs/ARCHITECTURE.md</span> Flux applicatif, séparation OpeningTree/Milvus et contrats API.</p><p class="mt-2"><span class="src">docs/DATA.md</span> Rôles des sources, schema Milvus, licences et politique de retrieval.</p><p class="mt-2"><span class="src">docs/adr/0006-rag-milvus-and-embeddings.md</span> Décisions et mesures de phase R.</p></div>
+      <div class="glass rounded-xl p-4"><h3 class="font-semibold text-clean">Runbook et code</h3><p class="text-sm text-slate-300 mt-2"><span class="src">docs/RAG-RUNBOOK.md</span> Commandes fetch, clean, snapshot, ingestion, benchmark et Eval V2.</p><p class="mt-2"><span class="src">backend/app/ingestion/</span> Adaptateurs, cleaner, mapping, chunker, pipeline.</p><p class="mt-2"><span class="src">backend/app/services/rag.py</span> Recherche, filtres, reranking, déduplication et fallbacks.</p></div>
+      <div class="glass rounded-xl p-4"><h3 class="font-semibold text-vector">Modèles et stockage</h3><p class="text-sm text-slate-300 mt-2"><span class="src">backend/app/services/embeddings.py</span> Qwen3/Ollama, instruction query, dimension et provenance runtime.</p><p class="mt-2"><span class="src">backend/app/services/milvus.py</span> schema, manifest, HNSW, filtres, upsert et search.</p><p class="mt-2"><span class="src">backend/app/services/retrieval_contracts.py</span> OpeningTreeContext, RetrievalPlan et RetrievedContext.</p></div>
+      <div class="glass rounded-xl p-4"><h3 class="font-semibold text-coach">Évaluation et audits</h3><p class="text-sm text-slate-300 mt-2"><span class="src">experiments/rag/</span> Mesures corpus/embeddings, volontairement sans le plan applicatif.</p><p class="mt-2"><span class="src">experiments/rag/eval_v2/</span> Évaluation production-shaped du contexte utile et de la pollution.</p><p class="mt-2"><span class="src">docs/DATA-SCHEMAS.md</span> Idées adjacentes : parties célèbres, cloud eval et surfaces non exploitées.</p></div>
+    </div>
+    <div class="mt-6 text-xs text-slate-500">Page générée pour le dépôt POC FFE · dernière vérification documentaire : 2026-10-06.</div>
+  </section>
+</main>
+</body>
+</html>
