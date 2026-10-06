@@ -6,18 +6,18 @@
 .app-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 16px;
+  gap: 12px;
   height: 100dvh;
   overflow: hidden;
-  padding: 16px;
+  padding: 14px 24px 18px;
   position: relative;
 }
 
 .app-shell::before {
   background:
-    radial-gradient(circle at 18% 12%, rgba(250, 204, 21, 0.26), transparent 24rem),
-    radial-gradient(circle at 86% 4%, rgba(56, 189, 248, 0.2), transparent 24rem),
-    linear-gradient(135deg, #020617 0%, #111827 52%, #312e16 100%);
+    radial-gradient(circle at 18% 12%, rgba(255, 106, 0, 0.16), transparent 24rem),
+    radial-gradient(circle at 86% 4%, rgba(183, 67, 0, 0.14), transparent 24rem),
+    linear-gradient(135deg, #171411 0%, #211e1b 52%, #12110f 100%);
   content: '';
   inset: 0;
   position: fixed;
@@ -27,15 +27,15 @@
 .top-bar {
   align-items: center;
   display: grid;
-  gap: 16px;
+  gap: 24px;
   grid-template-columns: minmax(0, 1fr) auto;
   margin: 0 auto;
-  max-width: 1440px;
+  max-width: 1760px;
   width: 100%;
 }
 
 .eyebrow {
-  color: #facc15;
+  color: #ff6a00;
   font-size: 0.7rem;
   font-weight: 900;
   letter-spacing: 0.16em;
@@ -44,7 +44,7 @@
 }
 
 h1 {
-  color: #f8fafc;
+  color: #f4efe7;
   font-size: clamp(1.5rem, 3vw, 2.5rem);
   letter-spacing: -0.05em;
   line-height: 1;
@@ -52,7 +52,7 @@ h1 {
 }
 
 .intro {
-  color: rgba(226, 232, 240, 0.72);
+  color: rgba(226, 216, 204, 0.72);
   font-size: 0.9rem;
   line-height: 1.35;
   margin: 6px 0 0;
@@ -68,17 +68,17 @@ h1 {
 
 .top-actions {
   align-items: start;
-  grid-template-columns: minmax(360px, 500px) minmax(360px, 500px);
+  grid-template-columns: minmax(300px, 440px) auto;
 }
 
 .rating-card {
   align-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 239, 224, 0.12);
   border-radius: 999px;
-  background: rgba(3, 7, 18, 0.58);
+  background: rgba(15, 12, 10, 0.72);
   gap: 6px 10px;
   grid-column: 1;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
   justify-self: end;
   max-width: 320px;
   opacity: 0.82;
@@ -87,7 +87,7 @@ h1 {
 }
 
 .rating-title {
-  color: #facc15;
+  color: #ff6a00;
   font-size: 0.66rem;
   font-weight: 900;
   grid-column: 1 / -1;
@@ -98,7 +98,7 @@ h1 {
 }
 
 .rating-card label {
-  color: rgba(238, 242, 255, 0.72);
+  color: rgba(238, 228, 218, 0.72);
   display: grid;
   font-size: 0.7rem;
   font-weight: 800;
@@ -109,8 +109,8 @@ h1 {
 .rating-card select {
   border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #f8fafc;
+  background: rgba(255, 239, 224, 0.12);
+  color: #f4efe7;
   font: inherit;
   font-size: 0.82rem;
   font-weight: 800;
@@ -132,23 +132,23 @@ button {
 }
 
 .primary {
-  background: #facc15;
-  color: #111827;
+  background: #ff6a00;
+  color: #1b130d;
 }
 
 .secondary {
-  background: rgba(255, 255, 255, 0.12);
-  color: #f8fafc;
+  background: rgba(255, 239, 224, 0.14);
+  color: #f4efe7;
 }
 
 .workspace {
   align-items: stretch;
   display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(280px, 310px) minmax(500px, 640px) minmax(400px, 458px);
+  gap: 12px;
+  grid-template-columns: minmax(600px, 0.92fr) minmax(680px, 1.08fr);
   height: 100%;
   margin: 0 auto;
-  max-width: 1440px;
+  max-width: 1760px;
   min-height: 0;
   width: 100%;
 }
@@ -157,16 +157,27 @@ button {
   align-content: start;
   align-items: start;
   display: grid;
-  gap: 12px;
-  grid-column: 2;
+  gap: 10px;
+  grid-column: 1;
   grid-row: 1;
-  justify-items: center;
+  justify-items: stretch;
   min-height: 0;
   overflow: hidden;
+  width: min(100%, calc(100dvh - 250px));
+}
+
+app-chessboard,
+app-move-history {
+  display: block;
+  width: 100%;
 }
 
 app-analysis-panel {
-  display: contents;
+  display: block;
+  grid-column: 2;
+  grid-row: 1;
+  min-height: 0;
+  min-width: 0;
 }
 
 @media (max-width: 1320px) {
@@ -182,13 +193,43 @@ app-analysis-panel {
     grid-template-columns: 1fr;
   }
 
+  .workspace {
+    height: auto;
+  }
+
+  app-analysis-panel {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .board-column {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .workspace app-analysis-panel .coach-column {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .workspace app-analysis-panel .explorer-column {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
   .top-actions {
     grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .buttons {
+    grid-column: 1;
   }
 
   .board-column {
     grid-column: auto;
     overflow: visible;
+    width: min(100%, calc(100dvh - 250px));
   }
 }
 

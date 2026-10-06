@@ -1,9 +1,14 @@
 import { TestBed } from '@angular/core/testing';
 import { App } from './app';
 import { provideHttpClient } from '@angular/common/http';
-import { of } from 'rxjs';
+import { of, Subject } from 'rxjs';
 
-import { AnalyzePositionResponse } from './models/analysis';
+import {
+  AnalyzePositionRequest,
+  AnalyzePositionResponse,
+  RagContextResponse,
+  StockfishRunResponse,
+} from './models/analysis';
 import { AnalysisService } from './services/analysis';
 
 function analysisStub(sessionId: string): AnalyzePositionResponse {
@@ -21,6 +26,12 @@ function analysisStub(sessionId: string): AnalyzePositionResponse {
     source_confidence: {},
     rag_context: [],
     coach_explanation: 'demo',
+    coach_status: 'generated',
+    analysis_key: 'key-1',
+    run_id: 'run-1',
+    explorer_status: 'generated',
+    stockfish_status: 'skipped',
+    rag_status: 'generated',
     stockfish: null,
     videos: [],
     fallbacks_used: [],
@@ -37,7 +48,12 @@ describe('App', () => {
         provideHttpClient(),
         {
           provide: AnalysisService,
-          useValue: { analyzePosition: () => of(analysisStub('session-1')) },
+          useValue: {
+            analyzePosition: () => of(analysisStub('session-1')),
+            analyzeStockfishRun: () => of({ stockfish: null, stockfish_status: 'skipped', fallbacks_used: [] }),
+            fetchRagContext: () => of({ rag_context: [], rag_status: 'generated', fallbacks_used: [] }),
+            streamCoach: vi.fn(),
+          },
         },
       ],
     }).compileComponents();
@@ -96,6 +112,65 @@ describe('App', () => {
     expect(app.currentIndex()).toBe(2);
   });
 
+  it('clears the board arrow when a structured recommended move is played', () => {
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+
+    app.setMovePreview({ from: 'e2', to: 'e4' });
+    expect(app.boardArrow()).toEqual({ from: 'e2', to: 'e4' });
+
+    app.onRecommendedMoveRequested({ from: 'e2', to: 'e4' });
+
+    expect(app.currentIndex()).toBe(1);
+    expect(app.boardArrow()).toBeNull();
+  });
+
+  it('keeps one active question per position and separates question cache entries', () => {
+    const service = TestBed.inject(AnalysisService);
+    const requests: AnalyzePositionRequest[] = [];
+    vi.spyOn(service, 'analyzePosition').mockImplementation((request) => {
+      requests.push(request);
+      return of(analysisStub('session-1'));
+    });
+
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.onMoveRequested({ from: 'e2', to: 'e4' });
+    app.askQuestion('Que peuvent jouer les Noirs ?');
+    app.askQuestion('Que peuvent jouer les Noirs ?');
+    app.askQuestion('Pourquoi ce coup est-il bon ?');
+
+    expect(requests).toHaveLength(3);
+    expect(requests.map((request) => request.question ?? null)).toEqual([
+      null,
+      'Que peuvent jouer les Noirs ?',
+      'Pourquoi ce coup est-il bon ?',
+    ]);
+    expect(app.question()).toBe('Pourquoi ce coup est-il bon ?');
+  });
+
+  it('submits a question from the coach form', () => {
+    const service = TestBed.inject(AnalysisService);
+    const requests: AnalyzePositionRequest[] = [];
+    vi.spyOn(service, 'analyzePosition').mockImplementation((request) => {
+      requests.push(request);
+      return of(analysisStub('session-1'));
+    });
+
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.onMoveRequested({ from: 'e2', to: 'e4' });
+    fixture.detectChanges();
+
+    const input = fixture.nativeElement.querySelector('input[name="question"]') as HTMLInputElement;
+    input.value = 'Pourquoi ce coup est-il bon ?';
+    const form = fixture.nativeElement.querySelector('form.question-form') as HTMLFormElement;
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+    expect(requests.at(-1)?.question).toBe('Pourquoi ce coup est-il bon ?');
+    expect(app.question()).toBe('Pourquoi ce coup est-il bon ?');
+  });
+
   it('ignores keyboard navigation while focus is in a form control', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
@@ -136,5 +211,56 @@ describe('App', () => {
 
     expect(app.analysis()).not.toBeNull();
     expect(app.analysis()!.session_id).toBe('session-1');
+  });
+
+  it('keeps Explorer visible while Stockfish and RAG are still pending', () => {
+    const explorer = new Subject<AnalyzePositionResponse>();
+    const stockfish = new Subject<StockfishRunResponse>();
+    const rag = new Subject<RagContextResponse>();
+    const service = TestBed.inject(AnalysisService);
+    vi.spyOn(service, 'analyzePosition').mockReturnValue(explorer.asObservable());
+    vi.spyOn(service, 'analyzeStockfishRun').mockReturnValue(stockfish.asObservable());
+    vi.spyOn(service, 'fetchRagContext').mockReturnValue(rag.asObservable());
+
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.onMoveRequested({ from: 'e2', to: 'e4' });
+    explorer.next({
+      ...analysisStub('session-1'),
+      coach_status: 'pending',
+      stockfish_status: 'pending',
+      rag_status: 'pending',
+    });
+
+    expect(app.analysis()?.opening.name).toBe("King's Pawn Game");
+    expect(app.loading()).toBe(false);
+    expect(app.stockfishLoading()).toBe(true);
+    expect(app.ragLoading()).toBe(true);
+  });
+
+  it('replaces the coach placeholder when the SSE stream fails', () => {
+    const service = TestBed.inject(AnalysisService);
+    const pendingAnalysis = {
+      ...analysisStub('session-1'),
+      coach_explanation:
+        "Le coach detaille est en cours de redaction. Les donnees de l'explorateur sont deja disponibles ci-contre.",
+      coach_status: 'pending' as const,
+    };
+    let streamHandlers: { error: () => void } | undefined;
+    vi.spyOn(service, 'analyzePosition').mockReturnValue(of(pendingAnalysis));
+    vi.spyOn(service, 'streamCoach').mockImplementation((_runId, handlers) => {
+      streamHandlers = handlers;
+      return { close: vi.fn() } as unknown as EventSource;
+    });
+
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.onMoveRequested({ from: 'e2', to: 'e4' });
+
+    streamHandlers?.error();
+
+    expect(app.analysis()?.coach_explanation).toBe('Explication indisponible pour cette position.');
+    expect(app.analysis()?.coach_status).toBe('failed');
+    expect(app.analysis()?.fallbacks_used).toContain('coach_stream_unavailable');
   });
 });

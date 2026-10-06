@@ -1,25 +1,45 @@
 import { Component, computed, input, output, signal } from '@angular/core';
-import { DecimalPipe, PercentPipe } from '@angular/common';
+import { PercentPipe } from '@angular/common';
 
 import { AnalyzePositionResponse, RecommendedMove } from '../models/analysis';
+import { CoachMarkdownComponent } from '../coach-markdown/coach-markdown';
+import { BoardMove } from '../models/game';
 
 @Component({
   selector: 'app-analysis-panel',
-  imports: [DecimalPipe, PercentPipe],
+  imports: [CoachMarkdownComponent, PercentPipe],
   templateUrl: './analysis-panel.html',
   styleUrl: './analysis-panel.css',
 })
 export class AnalysisPanelComponent {
   readonly analysis = input<AnalyzePositionResponse | null>(null);
   readonly fen = input('');
+  readonly legalMoves = input<string[]>([]);
+  readonly activeQuestion = input<string | null>(null);
   readonly ratingMin = input(0);
   readonly ratingMax = input(2500);
   readonly ratingBuckets = input<number[]>([]);
   readonly ratingMinChange = output<number>();
   readonly ratingMaxChange = output<number>();
+  readonly movePreview = output<BoardMove | null>();
+  readonly squarePreview = output<string | null>();
+  readonly moveRequested = output<BoardMove>();
+  readonly lineRequested = output<BoardMove[]>();
+  readonly questionSubmit = output<string>();
   readonly loading = input(false);
+  readonly stockfishLoading = input(false);
+  readonly ragLoading = input(false);
+  readonly coachStreaming = input(false);
   readonly error = input<string | null>(null);
   readonly activeExplorer = signal<'lichess' | 'masters'>('lichess');
+
+  submitQuestion(event: SubmitEvent, value: string): void {
+    event.preventDefault();
+    const question = value.trim();
+    if (question) {
+      this.questionSubmit.emit(question);
+    }
+  }
 
   readonly sortedRecommendedMoves = computed(() => {
     const moves = this.analysis()?.recommended_moves ?? [];
@@ -28,6 +48,18 @@ export class AnalysisPanelComponent {
     return [...moves].sort((left, right) =>
       this.compareMovesByWinningChance(left, right, winningSide),
     );
+  });
+
+  readonly coachMoves = computed(() => {
+    const result = this.analysis();
+    if (!result) {
+      return [];
+    }
+
+    return [...new Map(
+      [...result.recommended_moves, ...result.masters_moves]
+        .map((move) => [move.uci, move] as const),
+    ).values()];
   });
 
   hasStats(): boolean {
@@ -83,14 +115,34 @@ export class AnalysisPanelComponent {
     this.activeExplorer.set(tab);
   }
 
-  sourceConfidenceTotal(): number | null {
-    const total = this.analysis()?.source_confidence['total_games'];
-    return typeof total === 'number' ? total : null;
+  previewRecommendedMove(move: RecommendedMove): void {
+    const boardMove = this.toBoardMove(move.uci);
+    if (boardMove) {
+      this.movePreview.emit(boardMove);
+    }
   }
 
-  sourceConfidenceLabel(): string {
-    const lowConfidence = this.analysis()?.source_confidence['low_confidence'];
-    return lowConfidence === true ? 'Echantillon faible' : 'Echantillon suffisant';
+  clearMovePreview(): void {
+    this.movePreview.emit(null);
+  }
+
+  requestMove(move: RecommendedMove): void {
+    const boardMove = this.toBoardMove(move.uci);
+    if (boardMove) {
+      this.moveRequested.emit(boardMove);
+    }
+  }
+
+  contextRelationLabel(context: AnalyzePositionResponse['rag_context'][number]): string {
+    if (context.relation_to_position === 'child' && context.entry_move) {
+      return `Suite apres ${context.entry_move}`;
+    }
+
+    if (context.relation_to_position === 'fallback') {
+      return 'Contexte de secours';
+    }
+
+    return 'Position actuelle';
   }
 
   stockfishLabel(): string {
@@ -122,21 +174,6 @@ export class AnalysisPanelComponent {
     return `Meilleur coup ${bestMove} · ${scoreLabel}`;
   }
 
-  ratingRangeLabel(): string {
-    const min = Math.min(this.ratingMin(), this.ratingMax());
-    const max = Math.max(this.ratingMin(), this.ratingMax());
-    return min === max ? `bucket ${min}` : `${min}-${max}`;
-  }
-
-  ratingGroupsLabel(): string {
-    const min = Math.min(this.ratingMin(), this.ratingMax());
-    const max = Math.max(this.ratingMin(), this.ratingMax());
-    const groups = min === max
-      ? [min]
-      : this.ratingBuckets().filter((bucket) => min <= bucket && bucket < max);
-    return groups.length ? groups.join(', ') : 'aucun';
-  }
-
   private formatCompactNumber(value: number): string {
     if (value >= 1_000_000_000) {
       return `${this.trimDecimal(value / 1_000_000_000)} Md`;
@@ -161,6 +198,14 @@ export class AnalysisPanelComponent {
 
   private sideToMove(): 'white' | 'black' {
     return this.fen().split(' ')[1] === 'b' ? 'black' : 'white';
+  }
+
+  private toBoardMove(uci: string): BoardMove | null {
+    if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci)) {
+      return null;
+    }
+
+    return { from: uci.slice(0, 2), to: uci.slice(2, 4) };
   }
 
   private compareMovesByWinningChance(

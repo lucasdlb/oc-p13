@@ -3,23 +3,23 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   padding: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 239, 224, 0.12);
   border-radius: 999px;
-  background: rgba(3, 7, 18, 0.58);
+  background: rgba(15, 12, 10, 0.72);
 }
 
 button {
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: rgba(238, 242, 255, 0.72);
+  color: rgba(238, 228, 218, 0.72);
   cursor: pointer;
   font: inherit;
   padding: 10px 12px;
 }
 
 button.active {
-  background: #facc15;
-  color: #111827;
+  background: #ff6a00;
+  color: #1b130d;
   font-weight: 800;
 }

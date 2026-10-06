@@ -13,6 +13,123 @@ body {
 }
 
 body {
-  background: #020617;
+  background: #171411;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.analysis-card .context-list {
+  display: grid;
+  gap: 8px;
+}
+
+.analysis-card .context-card {
+  border: 1px solid rgba(255, 239, 224, 0.1);
+  border-radius: 11px;
+  background: #2a2622;
+  gap: 7px;
+  padding: 9px;
+}
+
+.analysis-card .context-heading {
+  align-items: start;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.analysis-card .context-heading > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.analysis-card .context-heading strong {
+  overflow-wrap: anywhere;
+}
+
+.analysis-card .context-heading small,
+.analysis-card .context-meta {
+  color: #a8a29a;
+  font-size: 0.68rem;
+  line-height: 1.25;
+}
+
+.analysis-card .source-link {
+  flex: 0 0 auto;
+  color: #ff8a3d;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.analysis-card .context-card details {
+  border-top: 1px solid rgba(255, 239, 224, 0.1);
+  padding-top: 6px;
+}
+
+.analysis-card .context-card summary {
+  color: #d0c7bc;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.analysis-card .context-card details p {
+  color: #c0b7ac;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  margin-top: 6px;
+}
+
+.analysis-card .move-row {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+}
+
+.analysis-card .move-row:hover,
+.analysis-card .move-row:focus-visible {
+  background: rgba(255, 106, 0, 0.14);
+  outline: 2px solid rgba(255, 106, 0, 0.38);
+  outline-offset: -2px;
+}
+
+.analysis-card .moves-scroll {
+  height: min(42dvh, 240px);
+  max-height: 42dvh;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.analysis-card .stats-card,
+.analysis-card .stockfish-card {
+  border-top: 1px solid rgba(255, 239, 224, 0.12);
+  padding-top: 10px;
+}
+
+.analysis-card .stats-legend {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, 1fr);
+  font-size: 0.68rem;
+}
+
+.analysis-card .badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.analysis-card .badges span {
+  border-radius: 999px;
+  background: #332e29;
+  color: #c0b7ac;
+  font-size: 0.58rem;
+  font-weight: 800;
+  padding: 1px 5px;
 }

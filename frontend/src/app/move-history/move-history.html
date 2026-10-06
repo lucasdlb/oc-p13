@@ -2,7 +2,6 @@
   <div class="history-header">
     <div>
       <p class="eyebrow">Historique</p>
-      <h2>Coups joues</h2>
     </div>
 
     <div class="navigation">
@@ -43,11 +42,12 @@
       <dt>PGN</dt>
       <dd>{{ pgn() || 'Position initiale' }}</dd>
     </div>
-    <div>
-      <dt>FEN</dt>
-      <dd>{{ fen() }}</dd>
-    </div>
   </dl>
+
+  <details class="fen-details">
+    <summary>FEN de la position</summary>
+    <p>{{ fen() }}</p>
+  </details>
 
   <p class="keyboard-hint">Fleches gauche et droite du clavier pour naviguer.</p>
 </section>

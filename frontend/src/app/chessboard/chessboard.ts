@@ -1,6 +1,7 @@
 import {
   afterNextRender,
   Component,
+  effect,
   ElementRef,
   EventEmitter,
   input,
@@ -10,6 +11,7 @@ import {
 } from '@angular/core';
 import { Chessground } from '@lichess-org/chessground';
 import type { Api } from '@lichess-org/chessground/api';
+import type { DrawShape } from '@lichess-org/chessground/draw';
 import type { Dests, Key } from '@lichess-org/chessground/types';
 
 import { BoardMove } from '../models/game';
@@ -22,6 +24,8 @@ import { BoardMove } from '../models/game';
 export class ChessboardComponent implements OnDestroy {
   readonly fen = input.required<string>();
   readonly dests = input.required<Dests>();
+  readonly arrow = input<BoardMove | null>(null);
+  readonly square = input<string | null>(null);
 
   @Output() readonly moveRequested = new EventEmitter<BoardMove>();
 
@@ -29,6 +33,11 @@ export class ChessboardComponent implements OnDestroy {
   private board?: Api;
 
   constructor() {
+    effect(() => {
+      const shapes = this.currentShapes();
+      this.board?.setShapes(shapes);
+    });
+
     afterNextRender(() => {
       this.board = Chessground(this.host().nativeElement, {
         fen: this.fen(),
@@ -47,6 +56,11 @@ export class ChessboardComponent implements OnDestroy {
         premovable: { enabled: false },
         draggable: { showGhost: true },
         highlight: { lastMove: true, check: true },
+        drawable: {
+          enabled: false,
+          visible: true,
+          shapes: this.currentShapes(),
+        },
       });
     });
   }
@@ -57,6 +71,31 @@ export class ChessboardComponent implements OnDestroy {
       turnColor: turn,
       movable: { color: turn, dests },
     });
+  }
+
+  private currentShapes(): DrawShape[] {
+    const shapes: DrawShape[] = [];
+    const move = this.arrow();
+    const square = this.square();
+    if (move) {
+      shapes.push(...this.arrowShape(move));
+    }
+    if (square) {
+      shapes.push({ orig: square as Key, brush: 'yellow' });
+    }
+    return shapes;
+  }
+
+  private arrowShape(move = this.arrow()): DrawShape[] {
+    if (!move) {
+      return [];
+    }
+
+    return [{
+      orig: move.from as Key,
+      dest: move.to as Key,
+      brush: 'green',
+    }];
   }
 
   ngOnDestroy(): void {

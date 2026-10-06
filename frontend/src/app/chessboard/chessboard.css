@@ -1,13 +1,13 @@
 :host {
   display: block;
   width: 100%;
-  max-width: min(620px, calc(100dvh - 320px));
+  max-width: min(100%, calc(100dvh - 250px));
 }
 
 .board-shell {
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 239, 224, 0.12);
   border-radius: 18px;
-  background: rgba(15, 23, 42, 0.54);
+  background: #211f1c;
   box-shadow: 0 18px 70px rgba(0, 0, 0, 0.32);
   padding: 10px;
 }

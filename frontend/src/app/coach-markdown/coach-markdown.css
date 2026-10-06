@@ -1,0 +1,139 @@
+.coach-markdown {
+  color: #f4efe7;
+  display: grid;
+  gap: 10px;
+  font-size: 0.8rem;
+  line-height: 1.38;
+}
+
+.coach-markdown > :first-child {
+  margin-top: 0;
+}
+
+.coach-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.coach-markdown h1,
+.coach-markdown h2,
+.coach-markdown h3,
+.coach-markdown h4 {
+  color: #fffaf2;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin: 10px 0 0;
+}
+
+.coach-markdown h1 {
+  font-size: 1.25rem;
+}
+
+.coach-markdown h2 {
+  font-size: 1.05rem;
+}
+
+.coach-markdown h3,
+.coach-markdown h4 {
+  font-size: 0.94rem;
+}
+
+.coach-markdown p,
+.coach-markdown ul,
+.coach-markdown ol,
+.coach-markdown blockquote,
+.coach-markdown pre {
+  margin: 0;
+}
+
+.coach-markdown ul,
+.coach-markdown ol {
+  display: grid;
+  gap: 5px;
+  padding-left: 21px;
+}
+
+.coach-markdown blockquote {
+  border-left: 3px solid #ff6a00;
+  color: #b8afa4;
+  padding-left: 12px;
+}
+
+.coach-markdown code {
+  border-radius: 5px;
+  background: #332e29;
+  font-size: 0.9em;
+  padding: 1px 4px;
+}
+
+.coach-markdown pre {
+  overflow-x: auto;
+}
+
+.coach-markdown pre code {
+  display: block;
+  padding: 10px;
+}
+
+.coach-markdown a {
+  color: #ff8a3d;
+  font-weight: 800;
+}
+
+.coach-move {
+  border: 1px solid rgba(255, 106, 0, 0.42);
+  border-radius: 6px;
+  background: rgba(255, 106, 0, 0.16);
+  color: #ffb273;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  padding: 1px 5px;
+}
+
+.coach-reference {
+  border: 1px solid rgba(255, 239, 224, 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  padding: 1px 5px;
+  text-decoration: none;
+}
+
+.coach-move:hover,
+.coach-move:focus-visible {
+  background: #ff6a00;
+  color: #1b130d;
+  outline: 2px solid rgba(255, 106, 0, 0.45);
+  outline-offset: 1px;
+}
+
+.coach-square-reference {
+  border-color: rgba(255, 215, 64, 0.45);
+  background: rgba(255, 215, 64, 0.14);
+  color: #ffe27a;
+}
+
+.coach-square-reference:hover,
+.coach-square-reference:focus-visible,
+.coach-line:hover,
+.coach-line:focus-visible {
+  background: rgba(255, 215, 64, 0.28);
+  color: #fff1a8;
+  outline: 2px solid rgba(255, 215, 64, 0.42);
+  outline-offset: 1px;
+}
+
+.coach-line {
+  border-color: rgba(108, 188, 255, 0.45);
+  background: rgba(108, 188, 255, 0.14);
+  color: #a8d8ff;
+}
+
+.coach-move-disabled,
+.coach-line-disabled {
+  border: 1px dashed rgba(255, 239, 224, 0.28);
+  border-radius: 6px;
+  color: #9f958a;
+  padding: 1px 5px;
+}

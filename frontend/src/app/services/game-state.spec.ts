@@ -51,6 +51,30 @@ describe('GameStateService', () => {
     expect(result.snapshot.currentIndex).toBe(0);
   });
 
+  it('applies a legal coach line atomically', () => {
+    const result = service.applyLine([
+      { from: 'e2', to: 'e4' },
+      { from: 'e7', to: 'e5' },
+      { from: 'g1', to: 'f3' },
+    ]);
+
+    expect(result.ok).toBe(true);
+    expect(result.snapshot.moves).toEqual(['e2e4', 'e7e5', 'g1f3']);
+    expect(result.snapshot.currentIndex).toBe(3);
+  });
+
+  it('rolls back a coach line when one move is illegal', () => {
+    const before = service.snapshot();
+    const result = service.applyLine([
+      { from: 'e2', to: 'e4' },
+      { from: 'e2', to: 'e5' },
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(result.snapshot.fen).toBe(before.fen);
+    expect(result.snapshot.moves).toEqual([]);
+  });
+
   it('resets the game after moves', () => {
     service.applyMove({ from: 'e2', to: 'e4' });
 

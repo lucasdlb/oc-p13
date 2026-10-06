@@ -18,22 +18,12 @@
   </header>
 
   <section class="workspace">
-    <app-analysis-panel
-      [analysis]="analysis()"
-      [fen]="fen()"
-      [ratingMin]="ratingMin()"
-      [ratingMax]="ratingMax()"
-      [ratingBuckets]="ratingBuckets"
-      (ratingMinChange)="setRatingMin($event)"
-      (ratingMaxChange)="setRatingMax($event)"
-      [loading]="loading()"
-      [error]="error()"
-    />
-
     <div class="board-column">
       <app-chessboard
         [fen]="fen()"
         [dests]="legalDests()"
+        [arrow]="boardArrow()"
+        [square]="previewedSquare()"
         (moveRequested)="onMoveRequested($event)"
       />
       <app-move-history
@@ -46,5 +36,27 @@
         (goForward)="goForward()"
       />
     </div>
+
+    <app-analysis-panel
+      [analysis]="analysis()"
+      [fen]="fen()"
+      [ratingMin]="ratingMin()"
+      [ratingMax]="ratingMax()"
+      [ratingBuckets]="ratingBuckets"
+      [legalMoves]="legalMoves()"
+      (ratingMinChange)="setRatingMin($event)"
+      (ratingMaxChange)="setRatingMax($event)"
+      [loading]="loading()"
+      [stockfishLoading]="stockfishLoading()"
+      [ragLoading]="ragLoading()"
+      [coachStreaming]="coachStreaming()"
+      [activeQuestion]="question()"
+      [error]="error()"
+      (movePreview)="setMovePreview($event)"
+      (squarePreview)="setSquarePreview($event)"
+      (moveRequested)="onRecommendedMoveRequested($event)"
+      (lineRequested)="onLineRequested($event)"
+      (questionSubmit)="askQuestion($event)"
+    />
   </section>
 </main>

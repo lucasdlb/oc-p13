@@ -9,6 +9,7 @@ export interface GameSnapshot {
   pgn: string;
   moves: string[];
   line: string[];
+  legalMoves: string[];
   legalDests: Dests;
   turn: 'white' | 'black';
   currentIndex: number;
@@ -37,13 +38,36 @@ export class GameStateService {
 
   applyMove(move: BoardMove): ApplyMoveResult {
     try {
-      const applied = this.game.move({ from: move.from, to: move.to, promotion: 'q' });
+      const applied = this.game.move({ from: move.from, to: move.to, promotion: move.promotion ?? 'q' });
       this.committed = [...this.committed.slice(0, this.cursor), applied.lan];
       this.cursor = this.committed.length;
       return { ok: true, snapshot: this.snapshot() };
     } catch {
       return { ok: false, snapshot: this.snapshot() };
     }
+  }
+
+  applyLine(moves: BoardMove[]): ApplyMoveResult {
+    const applied: string[] = [];
+    try {
+      for (const move of moves) {
+        const next = this.game.move({
+          from: move.from,
+          to: move.to,
+          promotion: move.promotion ?? 'q',
+        });
+        applied.push(next.lan);
+      }
+    } catch {
+      for (let index = 0; index < applied.length; index++) {
+        this.game.undo();
+      }
+      return { ok: false, snapshot: this.snapshot() };
+    }
+
+    this.committed = [...this.committed.slice(0, this.cursor), ...applied];
+    this.cursor = this.committed.length;
+    return { ok: true, snapshot: this.snapshot() };
   }
 
   goBack(): GameSnapshot | null {
@@ -81,6 +105,7 @@ export class GameStateService {
       pgn: this.getShortPgn(),
       moves,
       line: [...this.committed],
+      legalMoves: this.game.moves({ verbose: true }).map((move) => move.lan),
       legalDests: this.getLegalDests(),
       turn: this.game.turn() === 'w' ? 'white' : 'black',
       currentIndex: this.cursor,
