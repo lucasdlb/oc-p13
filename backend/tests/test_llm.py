@@ -161,7 +161,7 @@ def test_openai_compat_generate_posts_chat_completion() -> None:
 
     assert result == "Explication Mistral."
     assert captured == {
-        "model": "qwen2.5:7b-instruct",
+        "model": "mistral-large-latest",
         "messages": [
             {"role": "system", "content": "Coach contraint."},
             {"role": "user", "content": "Explique l'Espagnole."},

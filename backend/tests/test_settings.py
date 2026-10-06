@@ -266,6 +266,42 @@ def test_ollama_rejects_a_cloud_api_key() -> None:
         )
 
 
+def test_cloud_provider_gets_its_own_defaults() -> None:
+    settings = Settings.model_validate(
+        {"llm": {"provider": "nvidia", "api_key": "nvidia-key"}}
+    )
+
+    assert settings.llm.base_url == "https://integrate.api.nvidia.com/v1"
+    assert settings.llm.model == "nvidia/nemotron-3-super-120b-a12b"
+    assert settings.llm.api_key is not None
+    assert settings.llm.api_key.get_secret_value() == "nvidia-key"
+    assert "nvidia-key" not in repr(settings)
+
+
+def test_dimensions_must_match() -> None:
+    with pytest.raises(ValueError, match="embeddings.dimension must match milvus.dimension"):
+        Settings.model_validate({"embeddings": {"dimension": 768}})
+
+
+def test_confidence_thresholds_must_be_ordered() -> None:
+    with pytest.raises(ValueError, match="high_confidence"):
+        Settings.model_validate(
+            {"typesafe": {"high_confidence": 0.4, "medium_confidence": 0.5}}
+        )
+
+
+def test_rating_preset_bounds_must_be_ordered() -> None:
+    with pytest.raises(ValueError, match="min must be less than or equal to max"):
+        Settings.model_validate(
+            {"recommendations": {"rating_presets": {"custom": {"min": 1800, "max": 1200}}}}
+        )
+
+
+def test_unknown_settings_keys_are_rejected() -> None:
+    with pytest.raises(ValueError, match="timout_seconds"):
+        Settings.model_validate({"stockfish": {"timout_seconds": 2}})
+
+
 def test_keeps_config_without_lichess_token_unchanged() -> None:
     config = {"logging": {"level": "INFO"}, "lichess": {"enabled": True}}
 

@@ -27,6 +27,7 @@ from backend.app.services.retrieval_contracts import (
     CoachSourceAttribution,
 )
 from backend.app.services.coach_references import sanitize_coach_references
+from backend.app.services.coach_prompt import build_prompt, system_prompt
 
 MAX_LLM_COACH_CHARS = 4000
 MAX_COACH_SOURCE_CHARS = 3000
@@ -123,7 +124,7 @@ class LlmCoachService:
 
         prompt = _build_prompt(context, level)
         try:
-            text = self._provider.generate(prompt, system=_system_prompt())
+            text = self._provider.generate(prompt, system=system_prompt())
         except LLMProviderTimeoutError as exc:
             logger.warning("LLM coach fallback llm_coach_timeout: %s", exc)
             self._raise_fallback(context, level, "llm_coach_timeout")
@@ -152,8 +153,8 @@ class LlmCoachService:
         try:
             chunks: list[str] = []
             for chunk in self._provider.generate_stream(
-                _build_prompt(context, level),
-                system=_system_prompt(),
+                build_prompt(context, level),
+                system=system_prompt(),
             ):
                 chunks.append(chunk)
                 yield chunk

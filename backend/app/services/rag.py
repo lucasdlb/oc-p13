@@ -87,6 +87,10 @@ class RagService:
         """Load the embedding model before the first user retrieval."""
         self._embedding_provider.embed_query("retrieval warmup")
 
+    def close(self) -> None:
+        """Release resources owned by the embedding provider."""
+        self._embedding_provider.close()
+
     def retrieve(self, plan: RetrievalPlan, query: str) -> RagRetrievalResult:
         if not plan.buckets:
             return RagRetrievalResult(contexts=())

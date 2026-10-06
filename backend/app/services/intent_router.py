@@ -280,7 +280,7 @@ class JevIntentClassifier:
         try:
             response = self._client.post(
                 _join_url(self._settings.base_url, "/v1/systemone"),
-                headers={"Authorization": f"Bearer {self._settings.api_key}"},
+                headers={"Authorization": f"Bearer {self._settings.api_key.get_secret_value()}"},
                 json=_systemone_payload(context, self._settings.model),
             )
             response.raise_for_status()

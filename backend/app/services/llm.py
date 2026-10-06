@@ -34,6 +34,9 @@ class LLMProviderLengthError(LLMProviderError):
 
 @runtime_checkable
 class LLMProvider(Protocol):
+    def warmup(self) -> None:
+        """Load or validate the configured model before serving requests."""
+
     def generate(self, prompt: str, *, system: str | None = None) -> str:
         """Return a completion for `prompt`, optionally constrained by `system`."""
 
@@ -191,6 +194,9 @@ class OpenAICompatLLMProvider:
         self._owns_client = client is None
         self._client = client or httpx.Client(timeout=settings.timeout_seconds)
 
+    def warmup(self) -> None:
+        """Cloud providers load models on demand, so no startup call is needed."""
+
     def generate(self, prompt: str, *, system: str | None = None) -> str:
         try:
             response = self._post_with_retry(prompt, system=system)
@@ -268,7 +274,7 @@ class OpenAICompatLLMProvider:
 
     def _headers(self) -> dict[str, str]:
         assert self._settings.api_key is not None
-        return {"Authorization": f"Bearer {self._settings.api_key}"}
+        return {"Authorization": f"Bearer {self._settings.api_key.get_secret_value()}"}
 
     def _post_with_retry(self, prompt: str, *, system: str | None) -> httpx.Response:
         for attempt in range(self._settings.retries + 1):
@@ -336,6 +342,9 @@ class FakeLLMProvider:
         self._responses = list(responses or [])
         self.prompts: list[str] = []
         self.systems: list[str | None] = []
+
+    def warmup(self) -> None:
+        """Keep the fake compatible with the runtime provider protocol."""
 
     def generate(self, prompt: str, *, system: str | None = None) -> str:
         self.prompts.append(prompt)

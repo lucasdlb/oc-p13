@@ -86,7 +86,7 @@ class LichessExplorerClient:
             response = self.http_client.get(
                 f"{self.settings.base_url.rstrip('/')}/lichess",
                 params=_params(moves, ratings, move_count, include_variant=True),
-                headers={"Authorization": f"Bearer {self.settings.token}"},
+                headers={"Authorization": f"Bearer {self.settings.token.get_secret_value()}"},
             )
             response.raise_for_status()
             payload = LichessExplorerPayload.model_validate(response.json())
@@ -128,7 +128,7 @@ class LichessExplorerClient:
             response = self.http_client.get(
                 f"{self.settings.base_url.rstrip('/')}/masters",
                 params=_params(moves, ratings=None, move_count=move_count, include_variant=False),
-                headers={"Authorization": f"Bearer {self.settings.token}"},
+                headers={"Authorization": f"Bearer {self.settings.token.get_secret_value()}"},
             )
             response.raise_for_status()
             payload = LichessExplorerPayload.model_validate(response.json())

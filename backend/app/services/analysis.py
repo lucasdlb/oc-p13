@@ -37,6 +37,7 @@ from backend.app.services.lichess import (
 )
 from backend.app.services.opening_book import DEMO_OPENING_SOURCE, match_opening
 from backend.app.services.intent_router import CandidateMove, IntentRouter, IntentRouterContext, RouterSource
+from backend.app.services.explorer import ExplorerService, rating_buckets
 from backend.app.services.opening_tree import OpeningTree
 from backend.app.services.rag import RagService
 from backend.app.services.retrieval_contracts import (
@@ -49,6 +50,7 @@ from backend.app.services.retrieval_plan_builder import build_retrieval_plan
 from backend.app.services.run_store import RunStore, new_run_id, now_iso as run_now_iso
 from backend.app.services.session_store import SessionStore, build_move_docs
 from backend.app.services.stockfish import StockfishService, engine_version
+from backend.app.services.stockfish_run import StockfishRunService
 
 
 RATING_BUCKETS = (0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500)
@@ -71,91 +73,11 @@ def build_explorer_snapshot(
     cache_store: CacheStore,
     **_unused: object,
 ) -> AnalysisSnapshot:
-    """Produce the fast Explorer facts for a position.
-
-    This function intentionally never calls RAG, Stockfish, or the LLM. The
-    returned artifact is the only source family needed by the first response.
-    """
-    settings = get_settings().recommendations
-    local_match = match_opening(request.moves, request.fen)
-    ratings = _rating_buckets(request, settings)
-
-    cache_status = {"lichess": "skipped", "masters": "skipped", "stockfish": "skipped"}
-
-    lichess_result = _fetch_lichess_cached(
-        cache_store,
+    """Produce the fast Explorer facts without invoking slower families."""
+    return ExplorerService(get_settings().recommendations).build_snapshot(
+        request,
         lichess_client,
-        request.moves,
-        ratings,
-        settings.default_moves,
-        cache_status,
-    )
-    masters_result = _fetch_masters_cached(
         cache_store,
-        lichess_client,
-        request.moves,
-        settings.default_moves,
-        cache_status,
-    )
-
-    fallbacks_used: list[str] = []
-
-    if lichess_result.opening is not None:
-        opening = lichess_result.opening
-    elif local_match.matched:
-        opening = local_match.opening
-        fallbacks_used.append("demo_opening_seed")
-    else:
-        opening = local_match.opening
-        fallbacks_used.append("opening_not_matched")
-
-    confidence = _source_confidence(lichess_result.stats.games, settings)
-
-    if lichess_result.recommended_moves:
-        recommended_moves = _rank_moves(
-            lichess_result.recommended_moves,
-            total_games=lichess_result.stats.games,
-            fen=request.fen,
-            settings=settings,
-        )
-    else:
-        recommended_moves = list(local_match.recommended_moves)
-
-    if lichess_result.fallback:
-        fallbacks_used.append(lichess_result.fallback)
-
-    if masters_result.fallback:
-        fallbacks_used.append(masters_result.fallback)
-
-    fallbacks_used.append("youtube_search_fallback")
-
-    query = quote_plus(f"{opening.name} chess opening {request.level}")
-    videos = [
-        Video(
-            title=f"Recherche YouTube: {opening.name} {request.level}",
-            url=f"https://www.youtube.com/results?search_query={query}",
-            source="youtube-search-fallback",
-        )
-    ]
-
-    return AnalysisSnapshot(
-        opening=opening,
-        recommended_moves=recommended_moves,
-        masters_moves=_rank_moves(
-            masters_result.recommended_moves,
-            total_games=masters_result.stats.games,
-            fen=request.fen,
-            settings=settings,
-        ),
-        masters_stats=masters_result.stats,
-        lichess_stats=lichess_result.stats,
-        source_confidence=confidence,
-        rag_context=[],
-        stockfish=None,
-        videos=videos,
-        fallbacks_used=fallbacks_used,
-        cache=cache_status,
-        coach_context={},
     )
 
 
@@ -410,54 +332,12 @@ def analyze_stockfish_run(
     stockfish_service: StockfishService,
     cache_store: CacheStore,
 ) -> StockfishRunResponse:
-    run = _require_run(run_store, run_id)
-    if run.stockfish_status in {"generated", "fallback", "skipped"}:
-        return StockfishRunResponse(
-            stockfish=run.stockfish_result,
-            stockfish_status=run.stockfish_status,
-            fallbacks_used=run.stockfish_fallbacks,
-        )
-
-    if not run_store.claim_family(run_id, "stockfish"):
-        current = _wait_for_family(run_store, run_id, "stockfish") or _require_run(run_store, run_id)
-        return StockfishRunResponse(
-            stockfish=current.stockfish_result,
-            stockfish_status=current.stockfish_status,
-            fallbacks_used=current.stockfish_fallbacks,
-        )
-
-    facts = AnalysisSnapshot.model_validate(run.explorer_facts or {})
-    recommended_moves = [RecommendedMove.model_validate(move) for move in facts.recommended_moves]
-    cache_status = dict(facts.cache)
-    settings = get_settings()
-    fallbacks: list[str] = []
-    try:
-        result = _run_stockfish_if_needed(
-            stockfish_service,
-            cache_store,
-            run.fen,
-            facts.source_confidence,
-            recommended_moves,
-            facts.opening.matched,
-            cache_status,
-            depth=settings.stockfish.depth,
-            binary=settings.stockfish.binary,
-        )
-    except Exception:  # noqa: BLE001 - an unavailable engine is a safe fallback
-        result = {"status": "unavailable"}
-
-    if result is None:
-        status = "skipped"
-    elif result.get("status") == "ok":
-        status = "generated"
-    else:
-        status = "fallback"
-        fallbacks.append("stockfish_unavailable")
-    run_store.save_stockfish_result(run_id, result, status, fallbacks)
-    return StockfishRunResponse(
-        stockfish=result,
-        stockfish_status=status,
-        fallbacks_used=fallbacks,
+    _require_run(run_store, run_id)
+    return StockfishRunService(get_settings().stockfish).analyze(
+        run_id,
+        run_store,
+        stockfish_service,
+        cache_store,
     )
 
 
@@ -646,14 +526,7 @@ def _rating_buckets(
     request: AnalyzePositionRequest,
     settings: RecommendationSettings,
 ) -> list[int]:
-    preset = settings.rating_presets.get(request.level)
-    minimum = request.rating_min if request.rating_min is not None else preset.min if preset else 0
-    maximum = request.rating_max if request.rating_max is not None else preset.max if preset else 2500
-    if minimum > maximum:
-        minimum, maximum = maximum, minimum
-    if minimum == maximum:
-        return [minimum] if minimum in RATING_BUCKETS else []
-    return [bucket for bucket in RATING_BUCKETS if minimum <= bucket < maximum]
+    return rating_buckets(request, settings)
 
 
 def _fetch_lichess(

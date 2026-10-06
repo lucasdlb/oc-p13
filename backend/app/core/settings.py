@@ -2,39 +2,58 @@ from functools import lru_cache
 import logging
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 import tomllib
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 
 logger = logging.getLogger("backend.settings")
 
+_DEFAULT_LLM_PROVIDERS = {
+    "ollama": {
+        "base_url": "http://localhost:11434",
+        "model": "qwen2.5:7b-instruct",
+    },
+    "nvidia": {
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "model": "nvidia/nemotron-3-super-120b-a12b",
+    },
+    "mistral": {
+        "base_url": "https://api.mistral.ai/v1",
+        "model": "mistral-large-latest",
+    },
+}
 
-class LoggingSettings(BaseModel):
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class LoggingSettings(StrictModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     format: Literal["json", "text"] = "json"
     request_id_header: str = Field(default="X-Request-ID", min_length=1)
 
 
-class OrchestrationSettings(BaseModel):
+class OrchestrationSettings(StrictModel):
     langgraph_enabled: bool = True
 
 
-class LichessSettings(BaseModel):
+class LichessSettings(StrictModel):
     enabled: bool = False
     base_url: str = Field(default="https://explorer.lichess.org", min_length=1)
     timeout_seconds: float = Field(default=2.0, gt=0)
-    token: str | None = None
+    token: SecretStr | None = None
 
 
-class StockfishSettings(BaseModel):
+class StockfishSettings(StrictModel):
     binary: str = Field(default="stockfish", min_length=1)
     depth: int = Field(default=12, ge=1, le=30)
     timeout_seconds: float = Field(default=5.0, gt=0)
 
 
-class MongoSettings(BaseModel):
+class MongoSettings(StrictModel):
     enabled: bool = True
     uri: str = Field(default="mongodb://localhost:27017", min_length=1)
     database: str = Field(default="chess_agent", min_length=1)
@@ -43,7 +62,7 @@ class MongoSettings(BaseModel):
     videos_cache_ttl_seconds: int = Field(default=604800, ge=1)
 
 
-class EmbeddingsSettings(BaseModel):
+class EmbeddingsSettings(StrictModel):
     base_url: str = Field(default="http://localhost:11434", min_length=1)
     model: str = Field(default="qwen3-embedding:0.6b", min_length=1)
     dimension: int = Field(default=1024, ge=1, le=4096)
@@ -56,7 +75,7 @@ class EmbeddingsSettings(BaseModel):
     timeout_seconds: float = Field(default=120.0, gt=0)
 
 
-class MilvusSettings(BaseModel):
+class MilvusSettings(StrictModel):
     uri: str = Field(default="http://localhost:19530", min_length=1)
     collection: str = Field(default="chess_knowledge", min_length=1)
     metric_type: Literal["COSINE", "L2", "IP"] = "COSINE"
@@ -69,14 +88,14 @@ class MilvusSettings(BaseModel):
     timeout_seconds: float = Field(default=10.0, gt=0)
 
 
-class RagSettings(BaseModel):
+class RagSettings(StrictModel):
     k: int = Field(default=5, gt=0)
     granularity: Literal["page", "section"] = "section"
     min_score: float = Field(default=0.0, ge=-1.0, le=1.0)
     soft_eco_filter: bool = True
 
 
-class LLMSettings(BaseModel):
+class LLMSettings(StrictModel):
     provider: Literal["ollama", "nvidia", "mistral"] = "ollama"
     base_url: str = Field(default="http://localhost:11434", min_length=1)
     model: str = Field(default="qwen2.5:7b-instruct", min_length=1)
@@ -93,7 +112,21 @@ class LLMSettings(BaseModel):
     coach_timeout_seconds: float = Field(default=12.0, gt=0)
     retries: int = Field(default=1, ge=0, le=3)
     retry_backoff_seconds: float = Field(default=2.0, gt=0)
-    api_key: str | None = None
+    api_key: SecretStr | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_provider_defaults(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        provider = values.get("provider", "ollama")
+        defaults = _DEFAULT_LLM_PROVIDERS.get(provider)
+        if defaults is None:
+            return values
+        return {
+            **defaults,
+            **values,
+        }
 
     @model_validator(mode="after")
     def validate_provider_credentials(self) -> "LLMSettings":
@@ -113,22 +146,34 @@ class LLMSettings(BaseModel):
         return self
 
 
-class TypeSafeSettings(BaseModel):
+class TypeSafeSettings(StrictModel):
     enabled: bool = False
     base_url: str = Field(default="https://api.typesafe.ai", min_length=1)
     model: str = Field(default="jev-latest", min_length=1)
     timeout_seconds: float = Field(default=1.0, gt=0)
     high_confidence: float = Field(default=0.75, ge=0.0, le=1.0)
     medium_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
-    api_key: str | None = None
+    api_key: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def validate_confidence_order(self) -> "TypeSafeSettings":
+        if self.high_confidence < self.medium_confidence:
+            raise ValueError("typesafe.high_confidence must be greater than or equal to medium_confidence")
+        return self
 
 
-class RatingPresetSettings(BaseModel):
+class RatingPresetSettings(StrictModel):
     min: int = Field(ge=0)
     max: int = Field(ge=0)
 
+    @model_validator(mode="after")
+    def validate_range(self) -> "RatingPresetSettings":
+        if self.min > self.max:
+            raise ValueError("recommendations.rating_presets.min must be less than or equal to max")
+        return self
 
-class RecommendationSettings(BaseModel):
+
+class RecommendationSettings(StrictModel):
     min_move_share: float = Field(default=0.001, ge=0, le=1)
     min_position_games: int = Field(default=100, ge=0)
     default_moves: int = Field(default=12, gt=0)
@@ -141,7 +186,7 @@ class RecommendationSettings(BaseModel):
     )
 
 
-class Settings(BaseModel):
+class Settings(StrictModel):
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     orchestration: OrchestrationSettings = Field(default_factory=OrchestrationSettings)
     lichess: LichessSettings = Field(default_factory=LichessSettings)
@@ -154,9 +199,16 @@ class Settings(BaseModel):
     typesafe: TypeSafeSettings = Field(default_factory=TypeSafeSettings)
     recommendations: RecommendationSettings = Field(default_factory=RecommendationSettings)
 
+    @model_validator(mode="after")
+    def validate_embedding_dimension(self) -> "Settings":
+        if self.embeddings.dimension != self.milvus.dimension:
+            raise ValueError("embeddings.dimension must match milvus.dimension")
+        return self
+
 
 def _config_path() -> Path:
-    return Path(__file__).resolve().parents[3] / "config.toml"
+    override = os.environ.get("CONFIG_PATH")
+    return Path(override) if override else Path(__file__).resolve().parents[3] / "config.toml"
 
 
 def _env_path() -> Path:
@@ -280,6 +332,11 @@ def _with_secret_env(config: dict) -> dict:
         provider_config = llm_config.get("providers", {}).get(provider, {})
         if isinstance(provider_config, dict):
             merged["llm"] = {**llm_config, **provider_config}
+        if provider == "ollama" and ollama_base_url:
+            merged["llm"] = {**merged.get("llm", {}), "base_url": ollama_base_url}
+        if isinstance(merged.get("llm"), dict):
+            # Provider profiles are a config-loader concern, not LLMSettings fields.
+            merged["llm"] = {key: value for key, value in merged["llm"].items() if key != "providers"}
         secret_name = {
             "nvidia": "NVIDIA_API_KEY",
             "mistral": "MISTRAL_API_KEY",

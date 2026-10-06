@@ -6,7 +6,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
-from backend.app.core.settings import get_settings
+from backend.app.composition import (
+    RuntimeServices,
+    default_langgraph_enabled,
+    default_intent_router,
+    default_opening_tree,
+    default_stockfish_service,
+)
 from backend.app.models.analysis import (
     AnalysisRunRequest,
     AnalyzePositionRequest,
@@ -28,15 +34,15 @@ from backend.app.services.analysis import (
     retrieve_rag_for_run,
 )
 from backend.app.services.coach_stream import stream_coach
-from backend.app.services.cache_store import CacheStore, get_cache_store
+from backend.app.services.cache_store import CacheStore, get_cache_store as _legacy_get_cache_store
 from backend.app.services.coach import CoachService
 from backend.app.services.intent_router import IntentRouter, JevIntentClassifier
 from backend.app.services.lichess import LichessExplorerClient
 from backend.app.services.opening_tree import DEFAULT_OUTPUT_DIR, OpeningTree, OpeningTreeError
 from backend.app.services.rag import RagService
-from backend.app.services.session_store import SessionStore, get_session_store, now_iso
+from backend.app.services.session_store import SessionStore, get_session_store as _legacy_get_session_store, now_iso
 from backend.app.services.stockfish import StockfishService
-from backend.app.services.run_store import RunStore, get_run_store
+from backend.app.services.run_store import RunStore, get_run_store as _legacy_get_run_store
 from backend.app.orchestration.explorer_graph import (
     ExplorerGraphDependencies,
     run_explorer_graph,
@@ -50,35 +56,54 @@ logger = logging.getLogger("backend.api")
 
 
 def get_lichess_client(request: Request) -> LichessExplorerClient:
-    return request.app.state.lichess_client
+    return get_runtime(request).lichess_client
 
 
 def get_coach_service(request: Request) -> CoachService:
-    return request.app.state.coach_service
+    return get_runtime(request).coach_service
 
 
 def get_rag_service(request: Request) -> RagService:
-    return request.app.state.rag_service
+    return get_runtime(request).rag_service
 
 
-def get_stockfish_service() -> StockfishService:
-    return StockfishService(get_settings().stockfish)
+def get_runtime(request: Request) -> RuntimeServices:
+    return request.app.state.runtime
 
 
-@lru_cache
-def get_opening_tree() -> OpeningTree | None:
-    try:
-        return OpeningTree.from_snapshot_dir(DEFAULT_OUTPUT_DIR)
-    except OpeningTreeError as exc:
-        logger.warning("OpeningTree unavailable for RAG retrieval: %s", exc)
-        return None
+def is_langgraph_enabled(request: Request) -> bool:
+    runtime = getattr(request.app.state, "runtime", None)
+    return runtime.langgraph_enabled if runtime is not None else default_langgraph_enabled()
 
 
-@lru_cache
-def get_intent_router() -> IntentRouter:
-    settings = get_settings().typesafe
-    primary = JevIntentClassifier(settings=settings) if settings.enabled else None
-    return IntentRouter(primary=primary, medium_confidence=settings.medium_confidence)
+def get_cache_store(request: Request) -> CacheStore:
+    runtime = getattr(request.app.state, "runtime", None)
+    return runtime.cache_store if runtime is not None else _legacy_get_cache_store()
+
+
+def get_session_store(request: Request) -> SessionStore:
+    runtime = getattr(request.app.state, "runtime", None)
+    return runtime.session_store if runtime is not None else _legacy_get_session_store()
+
+
+def get_run_store(request: Request) -> RunStore:
+    runtime = getattr(request.app.state, "runtime", None)
+    return runtime.run_store if runtime is not None else _legacy_get_run_store()
+
+
+def get_stockfish_service(request: Request) -> StockfishService:
+    runtime = getattr(request.app.state, "runtime", None)
+    return runtime.stockfish_service if runtime is not None else default_stockfish_service()
+
+
+def get_opening_tree(request: Request) -> OpeningTree | None:
+    runtime = getattr(request.app.state, "runtime", None)
+    return runtime.opening_tree if runtime is not None else default_opening_tree()
+
+
+def get_intent_router(request: Request) -> IntentRouter:
+    runtime = getattr(request.app.state, "runtime", None)
+    return runtime.intent_router if runtime is not None else default_intent_router()
 
 
 LichessClientDep = Annotated[LichessExplorerClient, Depends(get_lichess_client)]
@@ -95,6 +120,7 @@ def health() -> dict[str, str]:
 @router.post("/api/analyze-position", response_model=AnalyzePositionResponse)
 def analyze_position_endpoint(
     request: AnalyzePositionRequest,
+    http_request: Request,
     lichess_client: LichessClientDep,
     run_store: RunStoreDep,
     stockfish_service: StockfishService = Depends(get_stockfish_service),
@@ -114,7 +140,7 @@ def analyze_position_endpoint(
         coach_service=None,
         run_store=run_store,
     )
-    if get_settings().orchestration.langgraph_enabled:
+    if is_langgraph_enabled(http_request):
         return run_explorer_graph(request, dependencies)
     return analyze_position(
         request,
@@ -133,11 +159,12 @@ def analyze_position_endpoint(
 @router.post("/api/coach-explanation", response_model=CoachExplanationResponse)
 def coach_explanation_endpoint(
     request: CoachExplanationRequest,
+    http_request: Request,
     coach_service: CoachServiceDep,
     run_store: RunStoreDep,
 ) -> CoachExplanationResponse:
     try:
-        if get_settings().orchestration.langgraph_enabled:
+        if is_langgraph_enabled(http_request):
             return run_coach_graph(
                 request.run_id,
                 request.level,
@@ -187,13 +214,14 @@ def stockfish_run_endpoint(
 @router.post("/api/rag-context", response_model=RagContextResponse)
 def rag_context_endpoint(
     request: AnalysisRunRequest,
+    http_request: Request,
     run_store: RunStoreDep,
     opening_tree: OpeningTree | None = Depends(get_opening_tree),
     intent_router: IntentRouter | None = Depends(get_intent_router),
     rag_service: RagService | None = Depends(get_rag_service),
 ) -> RagContextResponse:
     try:
-        if get_settings().orchestration.langgraph_enabled:
+        if is_langgraph_enabled(http_request):
             return run_rag_graph(
                 request.run_id,
                 RagGraphDependencies(
