@@ -7,12 +7,21 @@ embedding and store seams; LangGraph and API wiring happen outside this module.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+import logging
+import time
 from typing import Protocol, TypedDict
 
 from backend.app.models.knowledge import ScoredChunk
 from backend.app.services.embeddings import EmbeddingProvider, EmbeddingProviderError
 from backend.app.services.milvus import MilvusMetadataFilter, MilvusStore, MilvusStoreError
 from backend.app.services.retrieval_contracts import RetrievedContext, RetrievalBucket, RetrievalPlan
+
+
+logger = logging.getLogger("backend.rag")
+
+
+def _elapsed_ms(started: float) -> float:
+    return round((time.perf_counter() - started) * 1000, 2)
 
 
 @dataclass(frozen=True)
@@ -74,17 +83,34 @@ class RagService:
         self._store = store
         self._min_score = min_score
 
+    def warmup(self) -> None:
+        """Load the embedding model before the first user retrieval."""
+        self._embedding_provider.embed_query("retrieval warmup")
+
     def retrieve(self, plan: RetrievalPlan, query: str) -> RagRetrievalResult:
         if not plan.buckets:
             return RagRetrievalResult(contexts=())
 
+        started = time.perf_counter()
+        embedding_started = started
         try:
             vector = self._embedding_provider.embed_query(_query_text(query, plan))
         except EmbeddingProviderError:
+            logger.info(
+                "RAG retrieval timing",
+                extra={
+                    "status": "embedding_unavailable",
+                    "embedding_ms": _elapsed_ms(embedding_started),
+                    "milvus_search_ms": 0.0,
+                    "rerank_ms": 0.0,
+                    "total_ms": _elapsed_ms(started),
+                },
+            )
             return RagRetrievalResult(contexts=(), fallback_reasons=("rag_embedding_unavailable",))
 
         candidates: list[_Candidate] = []
         diagnostics: list[RerankingDiagnostic] = []
+        search_started = time.perf_counter()
         try:
             for bucket in plan.buckets:
                 for scored in self._search_bucket(vector, bucket, plan):
@@ -103,10 +129,34 @@ class RagService:
                         )
                     )
         except MilvusStoreError:
+            logger.info(
+                "RAG retrieval timing",
+                extra={
+                    "status": "store_unavailable",
+                    "embedding_ms": _elapsed_ms(embedding_started),
+                    "milvus_search_ms": _elapsed_ms(search_started),
+                    "rerank_ms": 0.0,
+                    "total_ms": _elapsed_ms(started),
+                },
+            )
             return RagRetrievalResult(contexts=(), fallback_reasons=("rag_store_unavailable",))
 
+        rerank_started = time.perf_counter()
         contexts, kept_diagnostics = _deduplicate_and_rank(candidates)
         diagnostics.extend(kept_diagnostics)
+        logger.info(
+            "RAG retrieval timing",
+            extra={
+                "status": "success",
+                "embedding_ms": _elapsed_ms(embedding_started),
+                "milvus_search_ms": _elapsed_ms(search_started),
+                "rerank_ms": _elapsed_ms(rerank_started),
+                "total_ms": _elapsed_ms(started),
+                "bucket_count": len(plan.buckets),
+                "candidate_count": len(candidates),
+                "context_count": len(contexts),
+            },
+        )
         return RagRetrievalResult(contexts=contexts, reranking_diagnostics=tuple(diagnostics))
 
     def _search_bucket(

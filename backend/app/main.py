@@ -65,6 +65,19 @@ async def lifespan(app: FastAPI):
     app.state.coach_service = LlmCoachService(provider=app.state.llm_provider)
     app.state.rag_service = _build_rag_service()
     try:
+        await asyncio.to_thread(
+            app.state.rag_service.warmup,
+        )
+        logger.info(
+            "Ollama embedding model warmed up",
+            extra={"model": settings.embeddings.model},
+        )
+    except Exception as exc:  # noqa: BLE001 - retrieval can fall back if Ollama is unavailable
+        logger.warning(
+            "Ollama embedding warmup failed; the first retrieval will retry model loading",
+            extra={"model": settings.embeddings.model, "error": str(exc)},
+        )
+    try:
         yield
     finally:
         app.state.lichess_client.close()

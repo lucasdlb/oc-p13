@@ -24,7 +24,7 @@ videos_cache_ttl_seconds = 604800
 model = "qwen3-embedding:0.6b"
 dimension = 1024
 batch_size = 32
-keep_alive = "5m"
+keep_alive = "30m"
 query_instruction = "Given a web search query, retrieve relevant passages that answer the query"
 timeout_seconds = 120.0
 
