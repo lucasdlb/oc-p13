@@ -1,5 +1,4 @@
 import hashlib
-import json
 
 from experiments.rag import fetch_manifest
 

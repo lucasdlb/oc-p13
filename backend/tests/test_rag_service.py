@@ -1,5 +1,3 @@
-import pytest
-
 from backend.app.models.knowledge import KnowledgeChunk, ScoredChunk
 from backend.app.services.embeddings import EmbeddingProviderError
 from backend.app.services.milvus import MilvusMetadataFilter, MilvusStoreError

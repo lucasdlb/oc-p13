@@ -1,5 +1,3 @@
-import pytest
-
 from backend.app.ingestion.opening_mapper import (
     CONF_ANCESTOR,
     CONF_EXACT,
