@@ -37,6 +37,12 @@ from backend.app.services.rag import RagService
 from backend.app.services.session_store import SessionStore, get_session_store, now_iso
 from backend.app.services.stockfish import StockfishService
 from backend.app.services.run_store import RunStore, get_run_store
+from backend.app.orchestration.explorer_graph import (
+    ExplorerGraphDependencies,
+    run_explorer_graph,
+)
+from backend.app.orchestration.rag_graph import RagGraphDependencies, run_rag_graph
+from backend.app.orchestration.coach_graph import CoachGraphDependencies, run_coach_graph
 
 
 router = APIRouter()
@@ -97,17 +103,30 @@ def analyze_position_endpoint(
     opening_tree: OpeningTree | None = Depends(get_opening_tree),
     intent_router: IntentRouter | None = Depends(get_intent_router),
 ) -> AnalyzePositionResponse:
+    dependencies = ExplorerGraphDependencies(
+        lichess_client=lichess_client,
+        stockfish_service=stockfish_service,
+        cache_store=cache_store,
+        session_store=session_store,
+        opening_tree=opening_tree,
+        intent_router=intent_router,
+        rag_service=None,
+        coach_service=None,
+        run_store=run_store,
+    )
+    if get_settings().orchestration.langgraph_enabled:
+        return run_explorer_graph(request, dependencies)
     return analyze_position(
         request,
-        lichess_client,
-        stockfish_service,
-        cache_store,
-        session_store,
-        opening_tree,
-        intent_router,
-        None,
-        None,
-        run_store,
+        dependencies.lichess_client,
+        dependencies.stockfish_service,
+        dependencies.cache_store,
+        dependencies.session_store,
+        dependencies.opening_tree,
+        dependencies.intent_router,
+        dependencies.rag_service,
+        dependencies.coach_service,
+        dependencies.run_store,
     )
 
 
@@ -118,6 +137,12 @@ def coach_explanation_endpoint(
     run_store: RunStoreDep,
 ) -> CoachExplanationResponse:
     try:
+        if get_settings().orchestration.langgraph_enabled:
+            return run_coach_graph(
+                request.run_id,
+                request.level,
+                CoachGraphDependencies(coach_service=coach_service, run_store=run_store),
+            )
         return render_run_coach(
             run_id=request.run_id,
             level=request.level,
@@ -168,6 +193,16 @@ def rag_context_endpoint(
     rag_service: RagService | None = Depends(get_rag_service),
 ) -> RagContextResponse:
     try:
+        if get_settings().orchestration.langgraph_enabled:
+            return run_rag_graph(
+                request.run_id,
+                RagGraphDependencies(
+                    run_store=run_store,
+                    opening_tree=opening_tree,
+                    intent_router=intent_router,
+                    rag_service=rag_service,
+                ),
+            )
         return retrieve_rag_for_run(
             request.run_id,
             run_store,

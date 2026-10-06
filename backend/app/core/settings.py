@@ -17,6 +17,10 @@ class LoggingSettings(BaseModel):
     request_id_header: str = Field(default="X-Request-ID", min_length=1)
 
 
+class OrchestrationSettings(BaseModel):
+    langgraph_enabled: bool = True
+
+
 class LichessSettings(BaseModel):
     enabled: bool = False
     base_url: str = Field(default="https://explorer.lichess.org", min_length=1)
@@ -139,6 +143,7 @@ class RecommendationSettings(BaseModel):
 
 class Settings(BaseModel):
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
+    orchestration: OrchestrationSettings = Field(default_factory=OrchestrationSettings)
     lichess: LichessSettings = Field(default_factory=LichessSettings)
     stockfish: StockfishSettings = Field(default_factory=StockfishSettings)
     mongodb: MongoSettings = Field(default_factory=MongoSettings)

@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
+    "langgraph>=1.0,<2",
     "mwparserfromhell>=0.7,<1",
     "pymilvus[milvus-lite]>=2.6,<3",
     "pymongo>=4.18.2",

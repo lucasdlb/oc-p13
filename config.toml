@@ -3,6 +3,9 @@ level = "INFO"
 format = "json"
 request_id_header = "X-Request-ID"
 
+[orchestration]
+langgraph_enabled = true
+
 [lichess]
 enabled = true
 base_url = "https://explorer.lichess.org"
