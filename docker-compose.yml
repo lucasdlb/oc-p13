@@ -28,7 +28,7 @@ services:
     restart: unless-stopped
 
   ollama:
-    image: ollama/ollama:0.35.0
+    image: ollama/ollama:0.40.0-rc5
     container_name: p13-ollama
     ports:
       - "${OLLAMA_PORT:-11434}:11434"

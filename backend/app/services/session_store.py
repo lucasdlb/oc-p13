@@ -120,6 +120,7 @@ class SessionStore:
         fen: str,
         response: dict,
     ) -> bool:
+        """Legacy helper: stores a complete response under the session."""
         session = self.get_session(session_id)
         if session is None:
             return False
@@ -135,6 +136,72 @@ class SessionStore:
             if analysis["position_key"] != position_key
         ]
         analyses.append(record)
+        return self._update(session_id, {"$set": {"analyses": analyses}})
+
+    def get_analysis_record(self, session_id: str, position_key: str) -> dict | None:
+        """Return a stored analysis record for a given position key, if any."""
+        session = self.get_session(session_id)
+        if session is None:
+            return None
+        for analysis in session.get("analyses", []):
+            if analysis.get("position_key") == position_key:
+                return analysis
+        return None
+
+    def save_analysis_snapshot(
+        self,
+        session_id: str,
+        position_key: str,
+        fen: str,
+        facts: dict,
+    ) -> bool:
+        """Store the source-bound facts before coach rendering."""
+        session = self.get_session(session_id)
+        if session is None:
+            return False
+        record = {
+            "position_key": position_key,
+            "fen": fen,
+            "facts": facts,
+            "coach_status": "pending",
+            "coach_explanation": None,
+            "coach_fallbacks": [],
+            "created_at": now_iso(),
+        }
+        analyses = [
+            analysis
+            for analysis in session["analyses"]
+            if analysis["position_key"] != position_key
+        ]
+        analyses.append(record)
+        return self._update(session_id, {"$set": {"analyses": analyses}})
+
+    def save_coach_explanation(
+        self,
+        session_id: str,
+        position_key: str,
+        explanation: str,
+        status: str,
+        fallbacks: list[str],
+    ) -> bool:
+        """Update an existing analysis record with the rendered coach text."""
+        session = self.get_session(session_id)
+        if session is None:
+            return False
+        analyses = []
+        updated = False
+        for analysis in session.get("analyses", []):
+            if analysis.get("position_key") == position_key:
+                analysis = {
+                    **analysis,
+                    "coach_status": status,
+                    "coach_explanation": explanation,
+                    "coach_fallbacks": fallbacks,
+                }
+                updated = True
+            analyses.append(analysis)
+        if not updated:
+            return False
         return self._update(session_id, {"$set": {"analyses": analyses}})
 
     def end_session(self, session_id: str) -> bool:

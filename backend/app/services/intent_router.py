@@ -1,9 +1,9 @@
 """Typed intent routing for retrieval planning.
 
 The router classifies a user question; it does not build retrieval filters,
-query Milvus, or generate coach prose. JEV/System-One can be added behind the
-``IntentClassifier`` seam later, while the conservative local fallback keeps the
-demo usable offline.
+query Milvus, or generate coach prose. The primary classifier calls the
+TypeSafe SystemOne API, while the conservative local fallback keeps the demo
+usable offline.
 """
 
 import logging
@@ -56,6 +56,20 @@ _INTENTS: tuple[RetrievalIntent, ...] = (
     "general_principle",
     "unclear",
 )
+
+_INTENT_DESCRIPTIONS: dict[RetrievalIntent, str] = {
+    "explain_current_position": "Explain plans and ideas for the current chess position.",
+    "ask_next_moves": "Ask what moves are available or what to play next.",
+    "ask_specific_candidate": "Ask about a specific candidate move.",
+    "evaluate_move_quality": "Evaluate whether a concrete move is good or bad.",
+    "ask_trap": "Ask about traps in the opening.",
+    "ask_mistake": "Ask about common mistakes or errors.",
+    "ask_history": "Ask about the history or origins of the opening.",
+    "ask_unsupported": "Ask about an unsupported opening.",
+    "ask_out_of_theory": "Ask about a concrete move that may be out of theory.",
+    "general_principle": "Ask for a general chess principle.",
+    "unclear": "The user's intent is unclear.",
+}
 
 
 class IntentRouterError(RuntimeError):
@@ -241,7 +255,12 @@ class RuleBasedIntentClassifier:
 
 
 class JevIntentClassifier:
-    """Optional TypeSafe/JEV classifier behind the ``IntentClassifier`` seam."""
+    """TypeSafe SystemOne intent classifier behind the ``IntentClassifier`` seam.
+
+    Sends a single ``choice`` question to the TypeSafe ``/v1/systemone`` endpoint
+    and returns the chosen retrieval intent. Falls back to the rule-based
+    classifier if the provider fails or the answer is invalid.
+    """
 
     def __init__(
         self,
@@ -260,18 +279,18 @@ class JevIntentClassifier:
 
         try:
             response = self._client.post(
-                _join_url(self._settings.base_url, "/v1/choice"),
+                _join_url(self._settings.base_url, "/v1/systemone"),
                 headers={"Authorization": f"Bearer {self._settings.api_key}"},
-                json=_jev_payload(context, self._settings.model),
+                json=_systemone_payload(context, self._settings.model),
             )
             response.raise_for_status()
             payload = response.json()
         except httpx.HTTPError as exc:
-            raise IntentRouterError("JEV provider request failed") from exc
+            raise IntentRouterError("TypeSafe provider request failed") from exc
         except ValueError as exc:
-            raise ValueError("JEV provider returned non-JSON response") from exc
+            raise ValueError("TypeSafe provider returned non-JSON response") from exc
 
-        decision = _decision_from_jev_payload(payload, default_model=self._settings.model)
+        decision = _systemone_decision(payload, default_model=self._settings.model)
         logger.info(
             "JEV intent classified",
             extra={
@@ -291,11 +310,12 @@ def _decision(
     reason_codes: tuple[str, ...] = (),
     source: RouterSource = "rule_fallback",
     provider_model: str | None = None,
+    probabilities: Mapping[RetrievalIntent, float] | None = None,
 ) -> IntentDecision:
     return IntentDecision(
         intent=intent,
         confidence=confidence,
-        probabilities=_probabilities(intent, confidence),
+        probabilities=probabilities if probabilities is not None else _probabilities(intent, confidence),
         matched_candidate_move=matched_candidate_move,
         reason_codes=reason_codes,
         source=source,
@@ -311,12 +331,29 @@ def _probabilities(intent: RetrievalIntent, confidence: float) -> dict[Retrieval
     return {candidate: bounded if candidate == intent else rest for candidate in _INTENTS}
 
 
-def _jev_payload(context: IntentRouterContext, model: str) -> dict:
+def _normalize_probabilities(
+    probabilities: Mapping,
+    chosen_intent: RetrievalIntent,
+    chosen_confidence: float,
+) -> dict[RetrievalIntent, float]:
+    """Coerce the provider's probability map to a valid distribution over intents."""
+    parsed: dict[RetrievalIntent, float] = {}
+    for intent in _INTENTS:
+        value = probabilities.get(intent)
+        try:
+            parsed[intent] = float(value) if isinstance(value, int | float) else 0.0
+        except (TypeError, ValueError):
+            parsed[intent] = 0.0
+    total = sum(parsed.values())
+    if total <= 0:
+        return _probabilities(chosen_intent, chosen_confidence)
+    return {intent: value / total for intent, value in parsed.items()}
+
+
+def _systemone_payload(context: IntentRouterContext, model: str) -> dict:
     return {
         "model": model,
-        "question": "Classify the user's retrieval intent. Return exactly one choice.",
-        "choices": list(_INTENTS),
-        "context": {
+        "state": {
             "user_question": context.question,
             "level": context.level,
             "moves": list(context.moves),
@@ -325,6 +362,13 @@ def _jev_payload(context: IntentRouterContext, model: str) -> dict:
             "current_eco": context.current_eco,
             "current_node_id": context.current_node_id,
             "legal_child_moves": [_candidate_move_payload(move) for move in context.legal_child_moves],
+        },
+        "questions": {
+            "intent": {
+                "type": "choice",
+                "instructions": "Classify the user's retrieval intent for a chess opening coach. Choose the option that best describes what the user wants.",
+                "criteria": _INTENT_DESCRIPTIONS,
+            }
         },
     }
 
@@ -339,33 +383,41 @@ def _candidate_move_payload(move: CandidateMove) -> dict:
     }
 
 
-def _decision_from_jev_payload(payload: object, *, default_model: str) -> IntentDecision:
+def _systemone_decision(payload: object, *, default_model: str) -> IntentDecision:
     if not isinstance(payload, Mapping):
-        raise ValueError("JEV response must be an object")
-
-    choice = payload.get("choice")
-    confidence = payload.get("confidence")
-    if choice not in _INTENTS:
-        raise ValueError(f"unknown JEV retrieval intent {choice!r}")
-    if not isinstance(confidence, int | float) or not 0.0 <= float(confidence) <= 1.0:
-        raise ValueError("JEV confidence must be between 0 and 1")
-
-    reason_codes = payload.get("reason_codes", ())
-    if reason_codes is None:
-        reason_codes = ()
-    if not isinstance(reason_codes, Sequence) or isinstance(reason_codes, str):
-        raise ValueError("JEV reason_codes must be a list")
-    if not all(isinstance(reason, str) for reason in reason_codes):
-        raise ValueError("JEV reason_codes must contain strings")
+        raise ValueError("TypeSafe response must be an object")
 
     model = payload.get("model", default_model)
     if model is not None and not isinstance(model, str):
-        raise ValueError("JEV model must be a string")
+        raise ValueError("TypeSafe model must be a string")
+
+    answers = payload.get("answers")
+    if not isinstance(answers, Mapping):
+        raise ValueError("TypeSafe response must contain an answers object")
+
+    answer = answers.get("intent")
+    if not isinstance(answer, Mapping):
+        raise ValueError("TypeSafe response must contain an answer named 'intent'")
+    if answer.get("type") != "choice":
+        raise ValueError("TypeSafe answer for 'intent' must be a choice")
+
+    choice = answer.get("choice")
+    if choice not in _INTENTS:
+        raise ValueError(f"unknown TypeSafe retrieval intent {choice!r}")
+
+    confidence = answer.get("confidence")
+    if not isinstance(confidence, int | float) or not 0.0 <= float(confidence) <= 1.0:
+        raise ValueError("TypeSafe confidence must be between 0 and 1")
+
+    probabilities = answer.get("probabilities")
+    if not isinstance(probabilities, Mapping):
+        raise ValueError("TypeSafe probabilities must be an object")
 
     return _decision(
         choice,
         float(confidence),
-        reason_codes=tuple(reason_codes),
+        probabilities=_normalize_probabilities(probabilities, choice, float(confidence)),
+        reason_codes=("jev_choice",),
         source="jev",
         provider_model=model,
     )

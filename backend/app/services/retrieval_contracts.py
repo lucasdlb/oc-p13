@@ -280,6 +280,16 @@ class CoachPositionContext:
             fen=current.fen if current else None,
         )
 
+    @classmethod
+    def from_artifact(cls, payload: dict) -> "CoachPositionContext":
+        return cls(
+            state=payload.get("state", "matched"),
+            opening_name=payload.get("opening_name"),
+            eco_code=payload.get("eco_code"),
+            pgn=payload.get("pgn"),
+            fen=payload.get("fen"),
+        )
+
     def to_artifact(self) -> dict:
         return {
             "state": self.state,
@@ -314,6 +324,20 @@ class CoachSourceAttribution:
             section_title=context.section_title,
             section_index=context.section_index,
             part_index=context.part_index,
+        )
+
+    @classmethod
+    def from_artifact(cls, payload: dict) -> "CoachSourceAttribution":
+        return cls(
+            chunk_id=payload["chunk_id"],
+            source=payload.get("source", ""),
+            source_url=payload.get("source_url"),
+            license_or_terms=payload.get("license_or_terms"),
+            page_id=payload.get("page_id", ""),
+            canonical_title=payload.get("canonical_title", ""),
+            section_title=payload.get("section_title"),
+            section_index=payload.get("section_index"),
+            part_index=payload.get("part_index", 0),
         )
 
     def to_artifact(self) -> dict:
@@ -356,6 +380,17 @@ class CoachProsePassage:
             eco_code=context.eco_code,
         )
 
+    @classmethod
+    def from_artifact(cls, payload: dict) -> "CoachProsePassage":
+        return cls(
+            text=payload["text"],
+            relation_to_position=payload.get("relation_to_position", "current"),
+            source_chunk_id=payload["source_chunk_id"],
+            opening_name=payload.get("opening_name"),
+            eco_code=payload.get("eco_code"),
+            entry_move=payload.get("entry_move"),
+        )
+
     def to_artifact(self) -> dict:
         return {
             "text": self.text,
@@ -373,6 +408,7 @@ class CoachCandidateContinuation:
     opening_name: str | None
     eco_code: str | None
     prose: tuple[CoachProsePassage, ...]
+    entry_uci: str | None = None
 
     def __post_init__(self) -> None:
         for passage in self.prose:
@@ -381,9 +417,23 @@ class CoachCandidateContinuation:
             if passage.entry_move != self.entry_move:
                 raise ValueError("child prose entry_move must match candidate continuation")
 
+    @classmethod
+    def from_artifact(cls, payload: dict) -> "CoachCandidateContinuation":
+        return cls(
+            entry_move=payload["entry_move"],
+            opening_name=payload.get("opening_name"),
+            eco_code=payload.get("eco_code"),
+            entry_uci=payload.get("entry_uci"),
+            prose=tuple(
+                CoachProsePassage.from_artifact(passage)
+                for passage in payload.get("prose", [])
+            ),
+        )
+
     def to_artifact(self) -> dict:
         return {
             "entry_move": self.entry_move,
+            "entry_uci": self.entry_uci,
             "opening_name": self.opening_name,
             "eco_code": self.eco_code,
             "prose": [passage.to_artifact() for passage in self.prose],
@@ -393,16 +443,19 @@ class CoachCandidateContinuation:
 @dataclass(frozen=True)
 class CoachContext:
     current_position: CoachPositionContext
+    question: str | None = None
     current_prose: tuple[CoachProsePassage, ...] = ()
     candidate_continuations: tuple[CoachCandidateContinuation, ...] = ()
     source_attributions: tuple[CoachSourceAttribution, ...] = ()
     lichess_stats: dict | None = None
+    recommended_moves: list[dict] = ()
     stockfish: dict | None = None
     fallbacks: tuple[str, ...] = ()
 
     def to_artifact(self) -> dict:
         return {
             "current_position": self.current_position.to_artifact(),
+            "question": self.question,
             "current_prose": [passage.to_artifact() for passage in self.current_prose],
             "candidate_continuations": [
                 continuation.to_artifact() for continuation in self.candidate_continuations
@@ -411,16 +464,42 @@ class CoachContext:
                 attribution.to_artifact() for attribution in self.source_attributions
             ],
             "lichess_stats": self.lichess_stats,
+            "recommended_moves": self.recommended_moves,
             "stockfish": self.stockfish,
             "fallbacks": list(self.fallbacks),
         }
+
+    @classmethod
+    def from_artifact(cls, payload: dict) -> "CoachContext":
+        return cls(
+            current_position=CoachPositionContext.from_artifact(payload.get("current_position", {})),
+            question=payload.get("question"),
+            current_prose=tuple(
+                CoachProsePassage.from_artifact(passage)
+                for passage in payload.get("current_prose", [])
+            ),
+            candidate_continuations=tuple(
+                CoachCandidateContinuation.from_artifact(continuation)
+                for continuation in payload.get("candidate_continuations", [])
+            ),
+            source_attributions=tuple(
+                CoachSourceAttribution.from_artifact(attribution)
+                for attribution in payload.get("source_attributions", [])
+            ),
+            lichess_stats=payload.get("lichess_stats"),
+            recommended_moves=payload.get("recommended_moves", []),
+            stockfish=payload.get("stockfish"),
+            fallbacks=tuple(payload.get("fallbacks", [])),
+        )
 
 
 def build_coach_context(
     *,
     tree_context: OpeningTreeContext,
+    question: str | None = None,
     retrieved_contexts: tuple[RetrievedContext, ...] = (),
     lichess_stats: dict | None = None,
+    recommended_moves: list[dict] | None = None,
     stockfish: dict | None = None,
     fallbacks: tuple[str, ...] = (),
 ) -> CoachContext:
@@ -436,22 +515,30 @@ def build_coach_context(
         elif passage.relation_to_position == "current":
             current_prose.append(passage)
 
+    child_uci_by_move = {
+        child.entry_move or (child.san[-1] if child.san else ""): child.uci[-1]
+        for child in tree_context.children
+        if child.uci
+    }
     candidate_continuations = tuple(
         CoachCandidateContinuation(
             entry_move=entry_move,
             opening_name=passages[0].opening_name if passages else None,
             eco_code=passages[0].eco_code if passages else None,
             prose=tuple(passages),
+            entry_uci=child_uci_by_move.get(entry_move),
         )
         for entry_move, passages in child_prose_by_move.items()
     )
 
     return CoachContext(
         current_position=CoachPositionContext.from_tree_context(tree_context),
+        question=question,
         current_prose=tuple(current_prose),
         candidate_continuations=candidate_continuations,
         source_attributions=tuple(source_attributions),
         lichess_stats=lichess_stats,
+        recommended_moves=recommended_moves or [],
         stockfish=stockfish,
         fallbacks=fallbacks,
     )

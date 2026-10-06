@@ -46,13 +46,29 @@ min_score = 0.0
 soft_eco_filter = true
 
 [llm]
-model = "qwen2.5:7b-instruct"
+provider = "nvidia"
 temperature = 0.2
-max_tokens = 512
-num_ctx = 4096
+max_tokens = 1000
+num_ctx = 8192
 think = false
+enable_thinking = false
 keep_alive = "5m"
 timeout_seconds = 60.0
+coach_timeout_seconds = 60.0
+retries = 1
+retry_backoff_seconds = 2.0
+
+[llm.providers.ollama]
+base_url = "http://localhost:11434"
+model = "qwen2.5:7b-instruct"
+
+[llm.providers.nvidia]
+base_url = "https://integrate.api.nvidia.com/v1"
+model = "nvidia/nemotron-3-super-120b-a12b"
+
+[llm.providers.mistral]
+base_url = "https://api.mistral.ai/v1"
+model = "mistral-large-latest"
 
 [typesafe]
 enabled = false

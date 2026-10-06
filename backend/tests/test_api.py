@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import threading
 from collections.abc import Iterator
 
 import pytest
@@ -12,6 +14,7 @@ from backend.app.api.routes import (
     get_lichess_client,
     get_opening_tree,
     get_rag_service,
+    get_run_store,
     get_session_store,
     get_stockfish_service,
 )
@@ -20,6 +23,7 @@ from backend.app.models.analysis import AnalyzePositionRequest, LichessStats, Op
 from backend.app.services.analysis import _rating_buckets
 from backend.app.services.cache_store import CacheStore
 from backend.app.services.coach import ConservativeCoachService
+from backend.app.services.coach_stream import stream_coach
 from backend.app.services.lichess import LichessExplorerResult
 from backend.app.services.intent_router import IntentRouter, IntentRouterError
 from backend.app.services.coach import LlmCoachService
@@ -27,6 +31,7 @@ from backend.app.services.llm import FakeLLMProvider, LLMProviderError
 from backend.app.services.rag import RagRetrievalResult
 from backend.app.services.retrieval_contracts import OpeningTreeContext, OpeningTreeNodeContext, RetrievedContext
 from backend.app.services.session_store import SessionStore
+from backend.app.services.run_store import RunStore
 from backend.tests.fakes import FakeDatabase
 
 
@@ -216,6 +221,7 @@ def hermetic_stores() -> Iterator[FakeDatabase]:
         settings=get_settings().mongodb,
     )
     app.dependency_overrides[get_session_store] = lambda: SessionStore(database=database)
+    app.dependency_overrides[get_run_store] = lambda: RunStore(database=database)
     yield database
 
 
@@ -241,6 +247,27 @@ def _post_analysis(payload: dict) -> dict:
 
 def _get_session(session_id: str) -> dict:
     response = client.get(f"/api/sessions/{session_id}")
+    assert response.status_code == 200
+    return response.json()
+
+
+def _fetch_coach(run_id_or_session_id: str, analysis_key_or_level: str, level: str | None = None) -> dict:
+    if level is None:
+        run_id = run_id_or_session_id
+        coach_level = analysis_key_or_level
+    else:
+        session = _get_session(run_id_or_session_id)
+        record = next(
+            record
+            for record in session["analyses"]
+            if record["position_key"] == analysis_key_or_level
+        )
+        run_id = record["facts"]["run_id"]
+        coach_level = level
+    response = client.post(
+        "/api/coach-explanation",
+        json={"run_id": run_id, "level": coach_level},
+    )
     assert response.status_code == 200
     return response.json()
 
@@ -323,6 +350,10 @@ def test_analyze_position_returns_documented_contract() -> None:
     body = response.json()
     session_id = body.pop("session_id")
     assert isinstance(session_id, str) and session_id
+    body.pop("run_id")
+    body.pop("explorer_status")
+    body.pop("stockfish_status")
+    body.pop("rag_status")
     assert body == {
         "opening": {
             "eco": "B00",
@@ -382,24 +413,10 @@ def test_analyze_position_returns_documented_contract() -> None:
             "low_confidence": False,
             "reason": None,
         },
-        "rag_context": [
-            {
-                "text": "Apres 1. e4, les blancs occupent le centre et liberent la dame et le fou roi.",
-                "source": "demo-pedagogical-seed",
-                "url": None,
-                "chunk_id": None,
-                "license_or_terms": None,
-                "page_id": None,
-                "section_index": None,
-                "part_index": None,
-                "section_title": None,
-                "relation_to_position": "fallback",
-                "entry_move": None,
-                "opening_name": "King's Pawn Game",
-                "eco_code": "B00",
-            }
-        ],
-        "coach_explanation": "Je n'ai pas assez de contexte source pour formuler une explication fiable. Je peux seulement signaler la ligne identifiee: King's Pawn Game.",
+        "rag_context": [],
+        "coach_explanation": "Le coach detaille est en cours de redaction. Les donnees de l'explorateur sont deja disponibles ci-contre.",
+        "coach_status": "pending",
+        "analysis_key": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1|debutant|1000,1200",
         "stockfish": None,
         "videos": [
             {
@@ -605,23 +622,7 @@ def test_analyze_position_uses_lichess_opening_when_local_seed_unknown() -> None
             "badges": ["Lichess"],
         }
     ]
-    assert body["rag_context"] == [
-        {
-            "text": "Lichess Opening Explorer identifie la ligne comme B00 King's Pawn.",
-            "source": "lichess-opening-explorer",
-            "url": None,
-            "chunk_id": None,
-            "license_or_terms": None,
-            "page_id": None,
-            "section_index": None,
-            "part_index": None,
-            "section_title": None,
-            "relation_to_position": "fallback",
-            "entry_move": None,
-            "opening_name": "King's Pawn",
-            "eco_code": "B00",
-        }
-    ]
+    assert body["rag_context"] == []
     assert "opening_not_matched" not in body["fallbacks_used"]
     assert "demo_opening_seed" not in body["fallbacks_used"]
     assert "youtube_search_fallback" in body["fallbacks_used"]
@@ -665,7 +666,10 @@ def test_analyze_position_maps_retrieved_rag_context_with_source_attribution() -
         }
     )
 
-    assert body["rag_context"] == [
+    assert body["rag_context"] == []
+    rag_response = client.post("/api/rag-context", json={"run_id": body["run_id"]})
+    assert rag_response.status_code == 200
+    assert rag_response.json()["rag_context"] == [
         {
             "text": "Ruy Lopez plans focus on central pressure and quick development.",
             "source": "wikibooks",
@@ -682,11 +686,13 @@ def test_analyze_position_maps_retrieved_rag_context_with_source_attribution() -
             "eco_code": "C60",
         }
     ]
-    assert "Dans la position actuelle" in body["coach_explanation"]
-    assert "Ruy Lopez plans focus on central pressure and quick development." in body["coach_explanation"]
-    assert "[source: Plans, CC BY-SA 4.0]" in body["coach_explanation"]
+    assert body["coach_status"] == "pending"
+    coach = _fetch_coach(body["session_id"], body["analysis_key"], "intermediaire")
+    assert "Dans la position actuelle" in coach["explanation"]
+    assert "Ruy Lopez plans focus on central pressure and quick development." in coach["explanation"]
+    assert "[source: Plans, CC BY-SA 4.0]" in coach["explanation"]
     assert rag_service.calls
-    assert "rag_unavailable" not in body["fallbacks_used"]
+    assert "rag_unavailable" not in rag_response.json()["fallbacks_used"]
 
 
 def test_analyze_position_question_can_trigger_next_move_child_retrieval() -> None:
@@ -729,15 +735,18 @@ def test_analyze_position_question_can_trigger_next_move_child_retrieval() -> No
         }
     )
 
+    rag_response = client.post("/api/rag-context", json={"run_id": body["run_id"]})
+    assert rag_response.status_code == 200
     call = rag_service.calls[0]
     assert call["plan"].intent == "ask_next_moves"
     assert any(bucket.relation_to_position == "child" for bucket in call["plan"].buckets)
     assert "Question: Que peuvent jouer les Noirs ?" in call["query"]
-    assert body["rag_context"][0]["relation_to_position"] == "child"
-    assert body["rag_context"][0]["entry_move"] == "Nf6"
-    assert "Si les Noirs jouent ...Nf6" in body["coach_explanation"]
-    assert "After ...Nf6, the Berlin is a possible continuation." in body["coach_explanation"]
-    assert "Dans la position actuelle" not in body["coach_explanation"]
+    assert rag_response.json()["rag_context"][0]["relation_to_position"] == "child"
+    assert rag_response.json()["rag_context"][0]["entry_move"] == "Nf6"
+    coach = _fetch_coach(body["session_id"], body["analysis_key"], "intermediaire")
+    assert "Si les Noirs jouent [[move:uci=g8f6,label=...Nf6]]" in coach["explanation"]
+    assert "After ...Nf6, the Berlin is a possible continuation." in coach["explanation"]
+    assert "Dans la position actuelle" not in coach["explanation"]
 
 
 def test_analyze_position_reports_intent_router_provider_unavailable_fallback() -> None:
@@ -780,12 +789,14 @@ def test_analyze_position_reports_intent_router_provider_unavailable_fallback() 
         }
     )
 
+    rag_response = client.post("/api/rag-context", json={"run_id": body["run_id"]})
+    assert rag_response.status_code == 200
     call = rag_service.calls[0]
     assert call["plan"].intent == "ask_next_moves"
     assert any(bucket.relation_to_position == "child" for bucket in call["plan"].buckets)
-    assert body["rag_context"][0]["relation_to_position"] == "child"
-    assert "intent_router_provider_unavailable" in body["fallbacks_used"]
-    assert "rag_unavailable" not in body["fallbacks_used"]
+    assert rag_response.json()["rag_context"][0]["relation_to_position"] == "child"
+    assert "intent_router_provider_unavailable" in rag_response.json()["fallbacks_used"]
+    assert "rag_unavailable" not in rag_response.json()["fallbacks_used"]
 
 
 def test_analyze_position_question_can_trigger_specific_candidate_retrieval() -> None:
@@ -828,14 +839,48 @@ def test_analyze_position_question_can_trigger_specific_candidate_retrieval() ->
         }
     )
 
+    rag_response = client.post("/api/rag-context", json={"run_id": body["run_id"]})
+    assert rag_response.status_code == 200
     call = rag_service.calls[0]
     assert call["plan"].intent == "ask_specific_candidate"
     child_buckets = [bucket for bucket in call["plan"].buckets if bucket.relation_to_position == "child"]
     assert child_buckets[0].node_ids == ("berlin-node",)
     assert child_buckets[0].entry_move == "Nf6"
     assert "Question: Et ...Nf6 ?" in call["query"]
-    assert body["rag_context"][0]["relation_to_position"] == "child"
-    assert body["rag_context"][0]["entry_move"] == "Nf6"
+    assert rag_response.json()["rag_context"][0]["relation_to_position"] == "child"
+    assert rag_response.json()["rag_context"][0]["entry_move"] == "Nf6"
+
+
+def test_analyze_position_keeps_questions_in_distinct_run_identities() -> None:
+    rag_service = FakeRagService(RagRetrievalResult(contexts=()))
+    app.dependency_overrides[get_opening_tree] = lambda: FakeOpeningTree()
+    app.dependency_overrides[get_intent_router] = lambda: IntentRouter()
+    app.dependency_overrides[get_rag_service] = lambda: rag_service
+
+    payload = {
+        "fen": "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 2 3",
+        "pgn": "1. e4 e5 2. Nf3 Nc6 3. Bb5",
+        "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"],
+        "level": "intermediaire",
+        "question": "Que peuvent jouer les Noirs ?",
+    }
+    first = _post_analysis(payload)
+    second = _post_analysis(
+        {
+            **payload,
+            "question": "Pourquoi ce coup est-il bon ?",
+            "session_id": first["session_id"],
+        }
+    )
+
+    assert first["run_id"] != second["run_id"]
+
+    first_rag = client.post("/api/rag-context", json={"run_id": first["run_id"]})
+    second_rag = client.post("/api/rag-context", json={"run_id": second["run_id"]})
+    assert first_rag.status_code == 200
+    assert second_rag.status_code == 200
+    assert "Question: Que peuvent jouer les Noirs ?" in rag_service.calls[0]["query"]
+    assert "Question: Pourquoi ce coup est-il bon ?" in rag_service.calls[1]["query"]
 
 
 def test_analyze_position_keeps_success_when_rag_retrieval_fails() -> None:
@@ -853,7 +898,9 @@ def test_analyze_position_keeps_success_when_rag_retrieval_fails() -> None:
     )
 
     assert body["opening"]["name"] == "King's Pawn Game"
-    assert body["rag_context"] == [
+    rag_response = client.post("/api/rag-context", json={"run_id": body["run_id"]})
+    assert rag_response.status_code == 200
+    assert rag_response.json()["rag_context"] == [
         {
             "text": "Apres 1. e4, les blancs occupent le centre et liberent la dame et le fou roi.",
             "source": "demo-pedagogical-seed",
@@ -870,12 +917,14 @@ def test_analyze_position_keeps_success_when_rag_retrieval_fails() -> None:
             "eco_code": "B00",
         }
     ]
-    assert body["coach_explanation"] == (
+    assert body["coach_status"] == "pending"
+    coach = _fetch_coach(body["session_id"], body["analysis_key"], "debutant")
+    assert coach["explanation"] == (
         "Je n'ai pas assez de contexte source pour formuler une explication fiable. "
         "Je peux seulement signaler la ligne identifiee: King's Pawn Game."
     )
-    assert "occupe le centre" not in body["coach_explanation"]
-    assert "rag_unavailable" in body["fallbacks_used"]
+    assert "occupe le centre" not in coach["explanation"]
+    assert "rag_unavailable" in rag_response.json()["fallbacks_used"]
 
 
 def test_analyze_position_prefers_lichess_opening_over_local_seed() -> None:
@@ -896,7 +945,8 @@ def test_analyze_position_prefers_lichess_opening_over_local_seed() -> None:
     assert body["opening"]["source"] == "lichess-opening-explorer"
     assert body["recommended_moves"][0]["games"] == 60
     assert "demo_opening_seed" not in body["fallbacks_used"]
-    assert body["coach_explanation"] == (
+    coach = _fetch_coach(body["session_id"], body["analysis_key"], "intermediaire")
+    assert coach["explanation"] == (
         "Je n'ai pas assez de contexte source pour formuler une explication fiable. "
         "Je peux seulement signaler la ligne identifiee: King's Pawn."
     )
@@ -962,10 +1012,8 @@ def test_analyze_position_reports_unmatched_opening() -> None:
 def test_analyze_position_runs_stockfish_for_unmatched_position() -> None:
     app.dependency_overrides[get_stockfish_service] = lambda: SuccessfulStockfishService()
 
-    response = client.post(
-        "/api/analyze-position",
-        json=UNMATCHED_PAYLOAD,
-    )
+    body = _post_analysis(UNMATCHED_PAYLOAD)
+    response = client.post("/api/stockfish/analyze-run", json={"run_id": body["run_id"]})
 
     assert response.status_code == 200
     assert response.json()["stockfish"] == {
@@ -1071,12 +1119,208 @@ def test_analyze_position_serves_stockfish_from_cache_on_second_call() -> None:
     app.dependency_overrides[get_stockfish_service] = lambda: counting
 
     first = _post_analysis(UNMATCHED_PAYLOAD)
-    second = _post_analysis(UNMATCHED_PAYLOAD)
+    first_stockfish = client.post(
+        "/api/stockfish/analyze-run", json={"run_id": first["run_id"]}
+    ).json()
+    second = client.post(
+        "/api/stockfish/analyze-run", json={"run_id": first["run_id"]}
+    ).json()
 
-    assert first["cache"]["stockfish"] == "miss"
-    assert second["cache"]["stockfish"] == "hit"
+    assert first_stockfish["stockfish_status"] == "generated"
+    assert second["stockfish_status"] == "generated"
     assert counting.calls == 1
-    assert second["stockfish"] == first["stockfish"]
+    assert second["stockfish"] == first_stockfish["stockfish"]
+
+
+def test_progressive_endpoints_are_isolated_and_idempotent() -> None:
+    lichess = CountingFallbackLichessClient()
+    stockfish = CountingStockfishService()
+    rag_service = FakeRagService(RagRetrievalResult(contexts=()))
+    app.dependency_overrides[get_lichess_client] = lambda: lichess
+    app.dependency_overrides[get_stockfish_service] = lambda: stockfish
+    app.dependency_overrides[get_opening_tree] = lambda: FakeOpeningTree()
+    app.dependency_overrides[get_intent_router] = lambda: IntentRouter()
+    app.dependency_overrides[get_rag_service] = lambda: rag_service
+
+    body = _post_analysis(UNMATCHED_PAYLOAD)
+    assert body["run_id"]
+    assert stockfish.calls == 0
+    assert rag_service.calls == []
+
+    same_run = _post_analysis({**UNMATCHED_PAYLOAD, "session_id": body["session_id"]})
+    assert same_run["run_id"] == body["run_id"]
+    assert lichess.calls == 1
+
+    first_stockfish = client.post(
+        "/api/stockfish/analyze-run", json={"run_id": body["run_id"]}
+    )
+    second_stockfish = client.post(
+        "/api/stockfish/analyze-run", json={"run_id": body["run_id"]}
+    )
+    assert first_stockfish.status_code == 200
+    assert second_stockfish.json() == first_stockfish.json()
+    assert stockfish.calls == 1
+
+    first_rag = client.post("/api/rag-context", json={"run_id": body["run_id"]})
+    second_rag = client.post("/api/rag-context", json={"run_id": body["run_id"]})
+    assert first_rag.status_code == 200
+    assert second_rag.json() == first_rag.json()
+    assert len(rag_service.calls) == 1
+
+    replay = _post_analysis({**UNMATCHED_PAYLOAD, "session_id": body["session_id"]})
+    assert replay["stockfish"] == first_stockfish.json()["stockfish"]
+    assert replay["rag_context"] == first_rag.json()["rag_context"]
+
+    first_coach = client.post(
+        "/api/coach-explanation",
+        json={"run_id": body["run_id"], "level": "debutant"},
+    )
+    second_coach = client.post(
+        "/api/coach-explanation",
+        json={"run_id": body["run_id"], "level": "debutant"},
+    )
+    assert first_coach.status_code == 200
+    assert second_coach.json() == first_coach.json()
+
+
+def test_coach_stream_emits_tokens_and_persists_the_complete_text() -> None:
+    provider = FakeLLMProvider(response="Explication progressive. [source: seed, demo]")
+    app.dependency_overrides[get_coach_service] = lambda: LlmCoachService(provider=provider)
+    body = _post_analysis(
+        {
+            "fen": KINGS_PAWN_FEN,
+            "pgn": "1. e4",
+            "moves": ["e2e4"],
+            "level": "debutant",
+        }
+    )
+
+    with client.stream("GET", f"/api/analysis-runs/{body['run_id']}/coach/stream") as response:
+        assert response.status_code == 200
+        stream = "".join(response.iter_text())
+
+    assert "event: start" in stream
+    assert "event: token" in stream
+    assert "event: done" in stream
+    assert "Explication progressive." in stream
+    assert len(provider.prompts) == 1
+
+    with client.stream("GET", f"/api/analysis-runs/{body['run_id']}/coach/stream") as response:
+        replay_stream = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert "event: done" in replay_stream
+    assert "Explication progressive. [source: seed, demo]" in replay_stream
+    assert len(provider.prompts) == 1
+
+    replay = client.post(
+        "/api/coach-explanation",
+        json={"run_id": body["run_id"], "level": "debutant"},
+    )
+    assert replay.status_code == 200
+    assert replay.json()["explanation"] == "Explication progressive. [source: seed, demo]"
+    assert len(provider.prompts) == 1
+
+
+def test_coach_stream_disconnect_resets_run_to_pending(hermetic_stores: FakeDatabase) -> None:
+    body = _post_analysis(UNMATCHED_PAYLOAD)
+    run_store = RunStore(database=hermetic_stores)
+    run = run_store.get_run(body["run_id"])
+    assert run is not None
+
+    class DisconnectingRequest:
+        async def is_disconnected(self) -> bool:
+            return True
+
+    class BlockingCoach:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.released = threading.Event()
+            self.finished = threading.Event()
+
+        def stream_explain(self, _context: object, *, level: str) -> Iterator[str]:
+            del level
+            self.started.set()
+            try:
+                yield "partial "
+                self.released.wait(timeout=2)
+                yield "completion"
+            finally:
+                self.finished.set()
+
+    coach = BlockingCoach()
+
+    async def consume_until_disconnect() -> None:
+        events = stream_coach(
+            DisconnectingRequest(),
+            run,
+            run_store,
+            coach,
+            run.level,
+        )
+        first = await anext(events)
+        assert first.event == "start"
+        assert await asyncio.to_thread(coach.started.wait, 1)
+        token = await anext(events)
+        assert token.event == "token"
+        with pytest.raises(asyncio.CancelledError):
+            await anext(events)
+        coach.released.set()
+        assert await asyncio.to_thread(coach.finished.wait, 1)
+
+    asyncio.run(consume_until_disconnect())
+
+    updated = run_store.get_run(run.run_id)
+    assert updated is not None
+    assert updated.coach_status == "pending"
+
+
+def test_coach_stream_reports_error_instead_of_emitting_pending_placeholder(
+    hermetic_stores: FakeDatabase,
+) -> None:
+    body = _post_analysis(UNMATCHED_PAYLOAD)
+    run_store = RunStore(database=hermetic_stores)
+    run = run_store.get_run(body["run_id"])
+    assert run is not None
+
+    class NonClaimingRunStore(RunStore):
+        def claim_family(self, _run_id: str, _family: str) -> bool:
+            return False
+
+    unavailable_store = NonClaimingRunStore(database=hermetic_stores)
+
+    async def collect_events() -> list:
+        events = stream_coach(
+            object(),
+            run,
+            unavailable_store,
+            ConservativeCoachService(),
+            run.level,
+        )
+        return [await anext(events), await anext(events)]
+
+    events = asyncio.run(collect_events())
+
+    assert [event.event for event in events] == ["start", "error"]
+    assert "en cours de redaction" not in str(events[1].data)
+
+
+def test_coach_explanation_reuses_stored_facts_without_calling_lichess_or_stockfish() -> None:
+    counting_lichess = CountingLichessClient()
+    counting_stockfish = CountingStockfishService()
+    app.dependency_overrides[get_lichess_client] = lambda: counting_lichess
+    app.dependency_overrides[get_stockfish_service] = lambda: counting_stockfish
+
+    body = _post_analysis(UNMATCHED_PAYLOAD)
+    assert body["coach_status"] == "pending"
+    lichess_calls_after_analysis = counting_lichess.calls
+    stockfish_calls_after_analysis = counting_stockfish.calls
+
+    coach = _fetch_coach(body["session_id"], body["analysis_key"], "debutant")
+
+    assert "explication" in coach["explanation"].lower() or "Je n'ai pas assez" in coach["explanation"]
+    assert counting_lichess.calls == lichess_calls_after_analysis
+    assert counting_stockfish.calls == stockfish_calls_after_analysis
 
 
 def test_analyze_position_creates_session_lazily_with_first_analyzed_move() -> None:
@@ -1099,7 +1343,7 @@ def test_analyze_position_creates_session_lazily_with_first_analyzed_move() -> N
     assert session["moves"][0]["pgn"] == "1. e4"
     assert len(session["analyses"]) == 1
     assert session["analyses"][0]["fen"] == KINGS_PAWN_FEN
-    assert session["analyses"][0]["response"]["session_id"] == body["session_id"]
+    assert session["analyses"][0]["facts"]["opening"]["name"] == "King's Pawn Game"
 
 
 def test_analyze_position_appends_moves_to_the_same_session() -> None:
@@ -1233,12 +1477,22 @@ def test_session_endpoints_roundtrip() -> None:
     assert conflict.status_code == 409
 
     analysis = client.post(
-        f"/api/sessions/{session_id}/analyses",
-        json={"position_key": "key-1", "fen": KINGS_PAWN_FEN, "response": {"coach": "demo"}},
+        "/api/analyze-position",
+        json={
+            "fen": KINGS_PAWN_FEN,
+            "pgn": "1. e4",
+            "moves": ["e2e4"],
+            "level": "debutant",
+            "session_id": session_id,
+        },
     )
 
     assert analysis.status_code == 200
-    assert analysis.json()["analyses"][0]["position_key"] == "key-1"
+    assert analysis.json()["session_id"] == session_id
+
+    session = client.get(f"/api/sessions/{session_id}")
+    assert session.status_code == 200
+    assert len(session.json()["analyses"]) == 1
 
     ended = client.post(f"/api/sessions/{session_id}/end")
 
@@ -1279,11 +1533,14 @@ def test_analyze_position_uses_llm_coach_when_configured() -> None:
         "level": "debutant",
     })
 
-    assert data["coach_explanation"] == "Explication LLM. [source: King's Pawn, CC BY-SA 4.0]"
-    assert "llm_coach_unavailable" not in data["fallbacks_used"]
+    assert data["coach_status"] == "pending"
+    coach = _fetch_coach(data["session_id"], data["analysis_key"], "debutant")
+    assert coach["explanation"] == "Explication LLM. [source: King's Pawn, CC BY-SA 4.0]"
+    assert coach["coach_status"] == "generated"
+    assert "llm_coach_unavailable" not in coach["fallbacks_used"]
 
 
-def test_analyze_position_falls_back_to_template_when_llm_missing_citations() -> None:
+def test_analyze_position_accepts_llm_without_citations() -> None:
     app.dependency_overrides[get_lichess_client] = lambda: SuccessfulLichessClient()
     app.dependency_overrides[get_coach_service] = lambda: LlmCoachService(
         provider=FakeLLMProvider(response="Explication sans citation.")
@@ -1296,8 +1553,10 @@ def test_analyze_position_falls_back_to_template_when_llm_missing_citations() ->
         "level": "debutant",
     })
 
-    assert "llm_coach_unavailable" in data["fallbacks_used"]
-    assert "Je n'ai pas assez de contexte source" in data["coach_explanation"]
+    coach = _fetch_coach(data["session_id"], data["analysis_key"], "debutant")
+    assert coach["explanation"] == "Explication sans citation."
+    assert coach["coach_status"] == "generated"
+    assert "llm_coach_unavailable" not in coach["fallbacks_used"]
 
 
 def test_analyze_position_falls_back_on_llm_provider_error() -> None:
@@ -1313,5 +1572,6 @@ def test_analyze_position_falls_back_on_llm_provider_error() -> None:
         "level": "debutant",
     })
 
-    assert "llm_coach_unavailable" in data["fallbacks_used"]
-    assert "Je n'ai pas assez de contexte source" in data["coach_explanation"]
+    coach = _fetch_coach(data["session_id"], data["analysis_key"], "debutant")
+    assert "llm_coach_unavailable" in coach["fallbacks_used"]
+    assert "Je n'ai pas assez de contexte source" in coach["explanation"]

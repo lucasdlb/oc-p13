@@ -1,6 +1,7 @@
 import pytest
 
 from backend.app.services.retrieval_contracts import (
+    CoachContext,
     CoachProsePassage,
     OpeningTreeContext,
     OpeningTreeNodeContext,
@@ -207,6 +208,7 @@ def test_child_context_requires_entry_move_for_conditional_labelling() -> None:
 def test_coach_context_separates_current_ruy_lopez_and_berlin_child_continuation() -> None:
     coach_context = build_coach_context(
         tree_context=OpeningTreeContext(current=RUY, children=(BERLIN,)),
+        question="Pourquoi jouer Nf3 ?",
         retrieved_contexts=(
             RetrievedContext(
                 chunk_id="chunk-ruy-plans",
@@ -258,6 +260,7 @@ def test_coach_context_separates_current_ruy_lopez_and_berlin_child_continuation
             "pgn": "1. e4 e5 2. Nf3 Nc6 3. Bb5",
             "fen": "ruy-fen",
         },
+        "question": "Pourquoi jouer Nf3 ?",
         "current_prose": [
             {
                 "text": "The Ruy Lopez increases pressure on e5 and prepares castling.",
@@ -269,9 +272,10 @@ def test_coach_context_separates_current_ruy_lopez_and_berlin_child_continuation
             }
         ],
         "candidate_continuations": [
-            {
-                "entry_move": "Nf6",
-                "opening_name": "Ruy Lopez: Berlin Defense",
+                {
+                    "entry_move": "Nf6",
+                    "entry_uci": "g8f6",
+                    "opening_name": "Ruy Lopez: Berlin Defense",
                 "eco_code": "C65",
                 "prose": [
                     {
@@ -310,9 +314,21 @@ def test_coach_context_separates_current_ruy_lopez_and_berlin_child_continuation
             },
         ],
         "lichess_stats": {"source": "lichess-opening-explorer", "games": 240000},
+        "recommended_moves": [],
         "stockfish": None,
         "fallbacks": ["youtube_search_fallback"],
     }
+
+
+def test_coach_context_artifact_roundtrip_preserves_user_question() -> None:
+    context = build_coach_context(
+        tree_context=OpeningTreeContext(current=RUY, children=(BERLIN,)),
+        question="Pourquoi jouer Nf3 ?",
+    )
+
+    restored = CoachContext.from_artifact(context.to_artifact())
+
+    assert restored.question == "Pourquoi jouer Nf3 ?"
 
 
 def test_coach_context_out_of_theory_makes_stockfish_authoritative() -> None:

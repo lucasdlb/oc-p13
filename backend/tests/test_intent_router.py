@@ -8,6 +8,7 @@ import httpx
 from backend.app.core.settings import TypeSafeSettings
 
 from backend.app.services.intent_router import (
+    _INTENTS,
     CandidateMove,
     IntentDecision,
     IntentRouter,
@@ -175,7 +176,7 @@ def test_router_falls_back_when_primary_response_is_invalid() -> None:
 
 
 
-def test_jev_classifier_seam_fails_closed_until_adapter_is_implemented() -> None:
+def test_jev_classifier_disabled_by_default_routes_to_fallback() -> None:
     decision = IntentRouter(primary=JevIntentClassifier()).classify(_context("Que jouer ?"))
 
     assert decision.intent == "ask_next_moves"
@@ -190,13 +191,32 @@ def test_jev_classifier_validates_provider_success_without_logging_secret(caplog
         requests.append(payload)
         assert request.headers["authorization"] == "Bearer ts-key"
         assert "ts-key" not in repr(payload)
+        assert request.url.path.endswith("/v1/systemone")
         return httpx.Response(
             200,
             json={
-                "choice": "ask_next_moves",
-                "confidence": 0.86,
-                "reason_codes": ["jev_choice"],
                 "model": "jev-1.13.0",
+                "answers": {
+                    "intent": {
+                        "type": "choice",
+                        "choice": "ask_next_moves",
+                        "confidence": 0.86,
+                        "probabilities": {
+                            "ask_next_moves": 0.86,
+                            "explain_current_position": 0.05,
+                            "ask_specific_candidate": 0.03,
+                            "evaluate_move_quality": 0.02,
+                            "ask_trap": 0.01,
+                            "ask_mistake": 0.01,
+                            "ask_history": 0.01,
+                            "ask_unsupported": 0.01,
+                            "ask_out_of_theory": 0.0,
+                            "general_principle": 0.0,
+                            "unclear": 0.0,
+                        },
+                    }
+                },
+                "usage": {"input_tokens": 120, "output_tokens": 12},
             },
         )
 
@@ -217,20 +237,12 @@ def test_jev_classifier_validates_provider_success_without_logging_secret(caplog
     assert decision.confidence == 0.86
     assert decision.source == "jev"
     assert decision.provider_model == "jev-1.13.0"
-    assert requests[0]["choices"] == [
-        "explain_current_position",
-        "ask_next_moves",
-        "ask_specific_candidate",
-        "evaluate_move_quality",
-        "ask_trap",
-        "ask_mistake",
-        "ask_history",
-        "ask_unsupported",
-        "ask_out_of_theory",
-        "general_principle",
-        "unclear",
-    ]
-    assert requests[0]["context"]["legal_child_moves"] == [
+    assert decision.reason_codes == ("jev_choice",)
+    request_payload = requests[0]
+    assert request_payload["model"] == "jev-1.13.0"
+    assert request_payload["questions"]["intent"]["type"] == "choice"
+    assert set(request_payload["questions"]["intent"]["criteria"]) == set(_INTENTS)
+    assert request_payload["state"]["legal_child_moves"] == [
         {
             "san": "Nf6",
             "uci": "g8f6",
@@ -264,7 +276,21 @@ def test_jev_classifier_routes_to_fallback_on_timeout() -> None:
 
 def test_jev_classifier_routes_to_fallback_on_invalid_response() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choice": "freeform_plan", "confidence": 0.9})
+        return httpx.Response(
+            200,
+            json={
+                "model": "jev-1.13.0",
+                "answers": {
+                    "intent": {
+                        "type": "choice",
+                        "choice": "freeform_plan",
+                        "confidence": 0.9,
+                        "probabilities": {},
+                    }
+                },
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        )
 
     classifier = JevIntentClassifier(
         settings=TypeSafeSettings(enabled=True, api_key="ts-key"),
@@ -279,7 +305,24 @@ def test_jev_classifier_routes_to_fallback_on_invalid_response() -> None:
 
 def test_jev_low_confidence_cannot_unlock_child_prose_intent() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choice": "ask_next_moves", "confidence": 0.2})
+        return httpx.Response(
+            200,
+            json={
+                "model": "jev-1.13.0",
+                "answers": {
+                    "intent": {
+                        "type": "choice",
+                        "choice": "ask_next_moves",
+                        "confidence": 0.2,
+                        "probabilities": {
+                            "ask_next_moves": 0.2,
+                            "explain_current_position": 0.8,
+                        },
+                    }
+                },
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        )
 
     classifier = JevIntentClassifier(
         settings=TypeSafeSettings(enabled=True, api_key="ts-key"),

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 import tomllib
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 logger = logging.getLogger("backend.settings")
@@ -73,15 +73,40 @@ class RagSettings(BaseModel):
 
 
 class LLMSettings(BaseModel):
+    provider: Literal["ollama", "nvidia", "mistral"] = "ollama"
     base_url: str = Field(default="http://localhost:11434", min_length=1)
     model: str = Field(default="qwen2.5:7b-instruct", min_length=1)
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     max_tokens: int = Field(default=512, gt=0)
     num_ctx: int = Field(default=4096, gt=0)
     think: bool = False
+    thinking: bool | None = None
+    enable_thinking: bool | None = None
+    reasoning_effort: Literal["none", "low", "medium", "high", "max"] | int | None = None
     keep_alive: str = Field(default="5m", min_length=1)
     seed: int | None = None
     timeout_seconds: float = Field(default=60.0, gt=0)
+    coach_timeout_seconds: float = Field(default=12.0, gt=0)
+    retries: int = Field(default=1, ge=0, le=3)
+    retry_backoff_seconds: float = Field(default=2.0, gt=0)
+    api_key: str | None = None
+
+    @model_validator(mode="after")
+    def validate_provider_credentials(self) -> "LLMSettings":
+        if self.provider == "ollama" and self.api_key:
+            raise ValueError("llm.api_key is not valid for the ollama provider")
+        if self.provider != "ollama" and not self.api_key:
+            raise ValueError(f"an API key is required for the {self.provider} provider")
+        return self
+
+    @model_validator(mode="after")
+    def validate_reasoning_controls(self) -> "LLMSettings":
+        controls = [self.thinking, self.enable_thinking, self.reasoning_effort]
+        if sum(control is not None for control in controls) > 1:
+            raise ValueError("llm.thinking, llm.enable_thinking, and llm.reasoning_effort are mutually exclusive")
+        if isinstance(self.reasoning_effort, int) and not 1 <= self.reasoning_effort <= 100:
+            raise ValueError("llm.reasoning_effort must be between 1 and 100")
+        return self
 
 
 class TypeSafeSettings(BaseModel):
@@ -181,11 +206,21 @@ def _without_config_secrets(config: dict) -> dict:
     _strip_config_key(
         stripped,
         "llm",
-        "base_url",
-        "llm.base_url found in config.toml is ignored: "
-        "it is environment-specific and must come from OLLAMA_BASE_URL "
-        "in the environment or .env",
+        "api_key",
+        "llm.api_key found in config.toml is ignored: "
+        "secrets must come from the selected provider's environment variable",
     )
+    llm = stripped.get("llm")
+    if isinstance(llm, dict):
+        providers = llm.get("providers")
+        if isinstance(providers, dict):
+            cleaned_providers = {}
+            for provider, values in providers.items():
+                if isinstance(values, dict):
+                    cleaned_providers[provider] = {
+                        key: value for key, value in values.items() if key != "api_key"
+                    }
+            stripped["llm"] = {**llm, "providers": cleaned_providers}
     _strip_config_key(
         stripped,
         "typesafe",
@@ -232,7 +267,25 @@ def _with_secret_env(config: dict) -> dict:
     ollama_base_url = os.environ.get("OLLAMA_BASE_URL") or _read_dotenv_value("OLLAMA_BASE_URL")
     if ollama_base_url:
         merged["embeddings"] = {**merged.get("embeddings", {}), "base_url": ollama_base_url}
-        merged["llm"] = {**merged.get("llm", {}), "base_url": ollama_base_url}
+
+    llm_updates: dict[str, str] = {}
+    llm_config = merged.get("llm")
+    if isinstance(llm_config, dict):
+        provider = llm_config.get("provider", "ollama")
+        provider_config = llm_config.get("providers", {}).get(provider, {})
+        if isinstance(provider_config, dict):
+            merged["llm"] = {**llm_config, **provider_config}
+        secret_name = {
+            "nvidia": "NVIDIA_API_KEY",
+            "mistral": "MISTRAL_API_KEY",
+        }.get(provider)
+        if secret_name:
+            api_key = os.environ.get(secret_name) or _read_dotenv_value(secret_name)
+            if api_key:
+                llm_updates["api_key"] = api_key
+
+    if llm_updates:
+        merged["llm"] = {**merged.get("llm", {}), **llm_updates}
 
     typesafe_api_key = os.environ.get("TYPESAFE_API_KEY") or _read_dotenv_value("TYPESAFE_API_KEY")
     if typesafe_api_key:

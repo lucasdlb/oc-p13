@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field, field_validator
 
 
 PedagogicalLevel = Literal["debutant", "intermediaire", "avance"]
+FamilyStatus = Literal["pending", "running", "generated", "fallback", "failed", "skipped"]
+CoachStatus = FamilyStatus
 
 
 class AnalyzePositionRequest(BaseModel):
@@ -67,7 +69,11 @@ class SessionMove(BaseModel):
 class SessionAnalysisRecord(BaseModel):
     position_key: str
     fen: str = Field(min_length=1)
-    response: dict
+    response: dict | None = None
+    facts: dict | None = None
+    coach_status: str | None = None
+    coach_explanation: str | None = None
+    coach_fallbacks: list[str] = Field(default_factory=list)
     created_at: str | None = None
 
 
@@ -154,8 +160,93 @@ class AnalyzePositionResponse(BaseModel):
     source_confidence: dict = Field(default_factory=dict)
     rag_context: list[RagContext]
     coach_explanation: str
+    coach_status: CoachStatus = "pending"
+    analysis_key: str | None = None
     stockfish: dict | None
     videos: list[Video]
     fallbacks_used: list[str]
     session_id: str | None = None
     cache: dict = Field(default_factory=dict)
+    run_id: str | None = None
+    explorer_status: FamilyStatus = "generated"
+    stockfish_status: FamilyStatus = "pending"
+    rag_status: FamilyStatus = "pending"
+
+
+class AnalysisRun(BaseModel):
+    """Persisted unit shared by the progressive analysis endpoints."""
+
+    run_id: str
+    session_id: str | None = None
+    analysis_key: str
+    request_fingerprint: str
+    fen: str
+    pgn: str
+    moves: list[str] = Field(default_factory=list)
+    level: PedagogicalLevel
+    question: str | None = None
+    rating_min: int | None = None
+    rating_max: int | None = None
+    explorer_status: FamilyStatus = "pending"
+    stockfish_status: FamilyStatus = "pending"
+    rag_status: FamilyStatus = "pending"
+    coach_status: FamilyStatus = "pending"
+    explorer_facts: dict | None = None
+    stockfish_result: dict | None = None
+    stockfish_fallbacks: list[str] = Field(default_factory=list)
+    rag_context: list[dict] = Field(default_factory=list)
+    rag_tree_context: dict | None = None
+    rag_retrieved_contexts: list[dict] = Field(default_factory=list)
+    rag_fallbacks: list[str] = Field(default_factory=list)
+    coach_context_artifact: dict | None = None
+    coach_result: dict | None = None
+    created_at: str
+    updated_at: str
+
+
+class AnalysisSnapshot(BaseModel):
+    """Serializable source-bound facts stored inside an ``AnalysisRun``.
+
+    Explorer writes the initial artifact; the RAG and Stockfish families add
+    their own payloads to the run before coach rendering.
+    """
+
+    opening: Opening
+    recommended_moves: list[RecommendedMove]
+    masters_moves: list[RecommendedMove] = Field(default_factory=list)
+    masters_stats: LichessStats
+    lichess_stats: LichessStats | dict
+    source_confidence: dict = Field(default_factory=dict)
+    rag_context: list[RagContext] = Field(default_factory=list)
+    stockfish: dict | None = None
+    videos: list[Video] = Field(default_factory=list)
+    fallbacks_used: list[str] = Field(default_factory=list)
+    cache: dict = Field(default_factory=dict)
+    coach_context: dict = Field(default_factory=dict)
+
+
+class CoachExplanationRequest(BaseModel):
+    run_id: str = Field(min_length=1)
+    level: PedagogicalLevel
+
+
+class CoachExplanationResponse(BaseModel):
+    explanation: str
+    coach_status: CoachStatus
+    fallbacks_used: list[str] = Field(default_factory=list)
+
+
+class AnalysisRunRequest(BaseModel):
+    run_id: str = Field(min_length=1)
+
+
+class StockfishRunResponse(BaseModel):
+    stockfish: dict | None = None
+    stockfish_status: FamilyStatus
+    fallbacks_used: list[str] = Field(default_factory=list)
+
+
+class RagContextResponse(BaseModel):
+    rag_context: list[RagContext] = Field(default_factory=list)
+    rag_status: FamilyStatus
+    fallbacks_used: list[str] = Field(default_factory=list)

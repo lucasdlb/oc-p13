@@ -6,7 +6,14 @@ the Lite servers during session teardown, while logging is still open, makes tha
 hook a no-op.
 """
 
+import os
+
 import pytest
+
+
+# The committed config selects NVIDIA; tests must be able to import the app without
+# requiring a developer's real credential.
+os.environ.setdefault("NVIDIA_API_KEY", "test-nvidia-key")
 
 
 @pytest.fixture(scope="session", autouse=True)

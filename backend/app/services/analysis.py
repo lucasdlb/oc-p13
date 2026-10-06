@@ -1,3 +1,8 @@
+import hashlib
+import json
+import threading
+import time
+from dataclasses import replace
 from urllib.parse import quote_plus
 
 import chess
@@ -5,12 +10,17 @@ from pydantic import ValidationError
 
 from backend.app.core.settings import RecommendationSettings, get_settings
 from backend.app.models.analysis import (
+    AnalysisSnapshot,
     AnalyzePositionRequest,
     AnalyzePositionResponse,
+    AnalysisRun,
+    CoachExplanationResponse,
     LichessStats,
     Opening,
+    RagContextResponse,
     RagContext,
     RecommendedMove,
+    StockfishRunResponse,
     Video,
 )
 from backend.app.services.cache_store import (
@@ -30,31 +40,43 @@ from backend.app.services.intent_router import CandidateMove, IntentRouter, Inte
 from backend.app.services.opening_tree import OpeningTree
 from backend.app.services.rag import RagService
 from backend.app.services.retrieval_contracts import (
+    CoachContext,
     OpeningTreeContext,
     RetrievedContext,
     build_coach_context,
 )
 from backend.app.services.retrieval_plan_builder import build_retrieval_plan
+from backend.app.services.run_store import RunStore, new_run_id, now_iso as run_now_iso
 from backend.app.services.session_store import SessionStore, build_move_docs
 from backend.app.services.stockfish import StockfishService, engine_version
 
 
 RATING_BUCKETS = (0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500)
 
+PENDING_COACH_TEXT = (
+    "Le coach detaille est en cours de redaction. "
+    "Les donnees de l'explorateur sont deja disponibles ci-contre."
+)
 
-def analyze_position(
+_EXPLORER_LOCK = threading.Lock()
+
+
+class AnalysisRunNotFoundError(LookupError):
+    """Raised when a progressive endpoint receives an unknown run id."""
+
+
+def build_explorer_snapshot(
     request: AnalyzePositionRequest,
     lichess_client: LichessExplorerClient,
-    stockfish_service: StockfishService,
     cache_store: CacheStore,
-    session_store: SessionStore,
-    opening_tree: OpeningTree | None = None,
-    intent_router: IntentRouter | None = None,
-    rag_service: RagService | None = None,
-    coach_service: CoachService | None = None,
-) -> AnalyzePositionResponse:
-    all_settings = get_settings()
-    settings = all_settings.recommendations
+    **_unused: object,
+) -> AnalysisSnapshot:
+    """Produce the fast Explorer facts for a position.
+
+    This function intentionally never calls RAG, Stockfish, or the LLM. The
+    returned artifact is the only source family needed by the first response.
+    """
+    settings = get_settings().recommendations
     local_match = match_opening(request.moves, request.fen)
     ratings = _rating_buckets(request, settings)
 
@@ -80,14 +102,11 @@ def analyze_position(
 
     if lichess_result.opening is not None:
         opening = lichess_result.opening
-        context = _lichess_context(opening)
     elif local_match.matched:
         opening = local_match.opening
-        context = local_match.context
         fallbacks_used.append("demo_opening_seed")
     else:
         opening = local_match.opening
-        context = local_match.context
         fallbacks_used.append("opening_not_matched")
 
     confidence = _source_confidence(lichess_result.stats.games, settings)
@@ -108,53 +127,18 @@ def analyze_position(
     if masters_result.fallback:
         fallbacks_used.append(masters_result.fallback)
 
-    rag_context, rag_fallbacks, tree_context, retrieved_contexts = _retrieve_rag_context(
-        request,
-        opening,
-        context,
-        opening_tree,
-        intent_router,
-        rag_service,
-    )
-    fallbacks_used.extend(rag_fallbacks)
-
-    stockfish = _run_stockfish_if_needed(
-        stockfish_service,
-        cache_store,
-        request.fen,
-        confidence,
-        recommended_moves,
-        local_match.matched,
-        cache_status,
-        depth=all_settings.stockfish.depth,
-        binary=all_settings.stockfish.binary,
-    )
-    if stockfish is not None:
-        if stockfish["status"] == "ok":
-            fallbacks_used.append("stockfish_evaluation")
-        else:
-            fallbacks_used.append("stockfish_unavailable")
-
     fallbacks_used.append("youtube_search_fallback")
 
     query = quote_plus(f"{opening.name} chess opening {request.level}")
+    videos = [
+        Video(
+            title=f"Recherche YouTube: {opening.name} {request.level}",
+            url=f"https://www.youtube.com/results?search_query={query}",
+            source="youtube-search-fallback",
+        )
+    ]
 
-    session_id = _sync_session(session_store, request, fallbacks_used)
-    coach_context = build_coach_context(
-        tree_context=tree_context,
-        retrieved_contexts=retrieved_contexts,
-        lichess_stats=lichess_result.stats.model_dump(),
-        stockfish=stockfish,
-        fallbacks=tuple(fallbacks_used),
-    )
-
-    try:
-        coach_explanation = (coach_service or ConservativeCoachService()).explain(coach_context, level=request.level)
-    except CoachFallbackError as exc:
-        coach_explanation = exc.text
-        fallbacks_used.append(exc.fallback_label)
-
-    response = AnalyzePositionResponse(
+    return AnalysisSnapshot(
         opening=opening,
         recommended_moves=recommended_moves,
         masters_moves=_rank_moves(
@@ -166,30 +150,496 @@ def analyze_position(
         masters_stats=masters_result.stats,
         lichess_stats=lichess_result.stats,
         source_confidence=confidence,
-        rag_context=rag_context,
-        coach_explanation=coach_explanation,
-        stockfish=stockfish,
-        videos=[
-            Video(
-                title=f"Recherche YouTube: {opening.name} {request.level}",
-                url=f"https://www.youtube.com/results?search_query={query}",
-                source="youtube-search-fallback",
-            )
-        ],
+        rag_context=[],
+        stockfish=None,
+        videos=videos,
         fallbacks_used=fallbacks_used,
-        session_id=session_id,
         cache=cache_status,
+        coach_context={},
     )
 
-    if session_id is not None:
-        session_store.save_analysis(
+
+def build_analysis_snapshot(
+    request: AnalyzePositionRequest,
+    lichess_client: LichessExplorerClient,
+    stockfish_service: StockfishService,
+    cache_store: CacheStore,
+    opening_tree: OpeningTree | None = None,
+    intent_router: IntentRouter | None = None,
+    rag_service: RagService | None = None,
+) -> AnalysisSnapshot:
+    """Compatibility wrapper for callers migrating to the Explorer seam."""
+    return build_explorer_snapshot(
+        request,
+        lichess_client,
+        cache_store,
+        stockfish_service=stockfish_service,
+        opening_tree=opening_tree,
+        intent_router=intent_router,
+        rag_service=rag_service,
+    )
+
+
+def analyze_position(
+    request: AnalyzePositionRequest,
+    lichess_client: LichessExplorerClient,
+    stockfish_service: StockfishService,
+    cache_store: CacheStore,
+    session_store: SessionStore,
+    opening_tree: OpeningTree | None = None,
+    intent_router: IntentRouter | None = None,
+    rag_service: RagService | None = None,
+    coach_service: CoachService | None = None,
+    run_store: RunStore | None = None,
+) -> AnalyzePositionResponse:
+    """Return Explorer facts immediately and persist a progressive run."""
+    all_settings = get_settings()
+    settings = all_settings.recommendations
+    ratings = _rating_buckets(request, settings)
+    position_key = _position_key(request.fen, request.level, ratings)
+    fingerprint = request_fingerprint(request)
+    with _EXPLORER_LOCK:
+        session_fallbacks: list[str] = []
+        session_id = _sync_session(session_store, request, session_fallbacks)
+        run = run_store.get_by_fingerprint(session_id, fingerprint) if run_store else None
+
+        if run is None and run_store and run_store.available():
+            run = run_store.create_run(
+                AnalysisRun(
+                    run_id=new_run_id(),
+                    session_id=session_id,
+                    analysis_key=position_key,
+                    request_fingerprint=fingerprint,
+                    fen=request.fen,
+                    pgn=request.pgn,
+                    moves=list(request.moves),
+                    level=request.level,
+                    question=request.question,
+                    rating_min=request.rating_min,
+                    rating_max=request.rating_max,
+                    created_at=run_now_iso(),
+                    updated_at=run_now_iso(),
+                )
+            )
+
+        if run is not None and run.explorer_facts:
+            snapshot = AnalysisSnapshot.model_validate(run.explorer_facts)
+            if session_id:
+                session_store.save_analysis_snapshot(
+                    session_id,
+                    position_key,
+                    request.fen,
+                    {**snapshot.model_dump(), "run_id": run.run_id},
+                )
+            return _explorer_response(snapshot, run.run_id, run, analysis_key=position_key)
+
+        if run is not None and run_store and not run_store.claim_family(run.run_id, "explorer"):
+            run = _wait_for_explorer(run_store, run.run_id)
+            if run is not None and run.explorer_facts:
+                snapshot = AnalysisSnapshot.model_validate(run.explorer_facts)
+                if session_id:
+                    session_store.save_analysis_snapshot(
+                        session_id,
+                        position_key,
+                        request.fen,
+                        {**snapshot.model_dump(), "run_id": run.run_id},
+                    )
+                return _explorer_response(snapshot, run.run_id, run, analysis_key=position_key)
+
+    snapshot = build_explorer_snapshot(
+        request,
+        lichess_client,
+        cache_store,
+        stockfish_service=stockfish_service,
+        opening_tree=opening_tree,
+        intent_router=intent_router,
+        rag_service=rag_service,
+    )
+    fallbacks_used = [*session_fallbacks, *snapshot.fallbacks_used]
+    if fallbacks_used != snapshot.fallbacks_used:
+        snapshot = snapshot.model_copy(update={"fallbacks_used": fallbacks_used})
+
+    run_id: str | None = run.run_id if run is not None else None
+    if run_store and run is not None and run_store.available():
+        run_store.save_explorer_facts(run.run_id, snapshot.model_dump())
+        run = run_store.get_run(run.run_id) or run
+
+    if session_id:
+        session_store.save_analysis_snapshot(
             session_id,
-            _position_key(request.fen, request.level, ratings),
+            position_key,
             request.fen,
-            response.model_dump(),
+            {**snapshot.model_dump(), "run_id": run_id},
         )
 
-    return response
+    return _explorer_response(
+        snapshot,
+        run_id,
+        run,
+        analysis_key=position_key,
+        session_id=session_id,
+    )
+
+
+def request_fingerprint(request: AnalyzePositionRequest) -> str:
+    payload = request.model_dump(exclude={"session_id"})
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _explorer_response(
+    snapshot: AnalysisSnapshot,
+    run_id: str | None,
+    run: object | None,
+    *,
+    analysis_key: str,
+    session_id: str | None = None,
+) -> AnalyzePositionResponse:
+    statuses = {
+        "explorer_status": getattr(run, "explorer_status", "generated"),
+        "stockfish_status": getattr(run, "stockfish_status", "pending"),
+        "rag_status": getattr(run, "rag_status", "pending"),
+        "coach_status": getattr(run, "coach_status", "pending"),
+    }
+    coach_result = getattr(run, "coach_result", None)
+    stored_rag_context = getattr(run, "rag_context", None)
+    stored_stockfish = getattr(run, "stockfish_result", None)
+    stored_fallbacks = [
+        *getattr(run, "stockfish_fallbacks", []),
+        *getattr(run, "rag_fallbacks", []),
+    ]
+    rag_context = (
+        [RagContext.model_validate(context) for context in stored_rag_context]
+        if stored_rag_context
+        else snapshot.rag_context
+    )
+    coach_explanation = (
+        coach_result.get("explanation", PENDING_COACH_TEXT)
+        if isinstance(coach_result, dict)
+        else PENDING_COACH_TEXT
+    )
+    return AnalyzePositionResponse(
+        opening=snapshot.opening,
+        recommended_moves=snapshot.recommended_moves,
+        masters_moves=snapshot.masters_moves,
+        masters_stats=snapshot.masters_stats,
+        lichess_stats=snapshot.lichess_stats,
+        source_confidence=snapshot.source_confidence,
+        rag_context=rag_context,
+        coach_explanation=coach_explanation,
+        coach_status=statuses["coach_status"],
+        analysis_key=getattr(run, "analysis_key", analysis_key) or analysis_key,
+        stockfish=stored_stockfish,
+        videos=snapshot.videos,
+        fallbacks_used=list(dict.fromkeys([*snapshot.fallbacks_used, *stored_fallbacks])),
+        session_id=getattr(run, "session_id", session_id) or session_id,
+        cache=snapshot.cache,
+        run_id=run_id,
+        explorer_status=statuses["explorer_status"],
+        stockfish_status=statuses["stockfish_status"],
+        rag_status=statuses["rag_status"],
+    )
+
+
+def render_coach_explanation(
+    session_id: str,
+    analysis_key: str,
+    level: str,
+    coach_service: CoachService,
+    session_store: SessionStore,
+) -> CoachExplanationResponse:
+    """Render the coach explanation from a stored snapshot.
+
+    This endpoint does not call Lichess, Stockfish or Milvus. It reads the
+    previously stored facts and asks the LLM to synthesize the explanation.
+    The result is cached in the session so repeated calls are instant.
+    """
+    record = session_store.get_analysis_record(session_id, analysis_key)
+    if record is None:
+        raise ValueError(f"Analysis record not found for key {analysis_key}")
+
+    existing_status = record.get("coach_status")
+    existing_explanation = record.get("coach_explanation")
+    if existing_status in ("generated", "fallback") and existing_explanation:
+        return CoachExplanationResponse(
+            explanation=existing_explanation,
+            coach_status=existing_status,
+            fallbacks_used=list(record.get("coach_fallbacks", [])),
+        )
+
+    facts = record.get("facts", {})
+    coach_context = CoachContext.from_artifact(facts.get("coach_context", {}))
+
+    explanation, status, fallbacks = _render_coach(
+        coach_context,
+        level,
+        coach_service,
+    )
+
+    session_store.save_coach_explanation(
+        session_id,
+        analysis_key,
+        explanation,
+        status,
+        fallbacks,
+    )
+
+    return CoachExplanationResponse(
+        explanation=explanation,
+        coach_status=status,
+        fallbacks_used=fallbacks,
+    )
+
+
+def _render_coach(
+    coach_context: CoachContext,
+    level: str,
+    coach_service: CoachService | None,
+) -> tuple[str, str, list[str]]:
+    """Render coach text and return (explanation, status, extra_fallbacks)."""
+    try:
+        text = (coach_service or ConservativeCoachService()).explain(coach_context, level=level)
+    except CoachFallbackError as exc:
+        return exc.text, "fallback", [exc.fallback_label]
+    return text, "generated", []
+
+
+def analyze_stockfish_run(
+    run_id: str,
+    run_store: RunStore,
+    stockfish_service: StockfishService,
+    cache_store: CacheStore,
+) -> StockfishRunResponse:
+    run = _require_run(run_store, run_id)
+    if run.stockfish_status in {"generated", "fallback", "skipped"}:
+        return StockfishRunResponse(
+            stockfish=run.stockfish_result,
+            stockfish_status=run.stockfish_status,
+            fallbacks_used=run.stockfish_fallbacks,
+        )
+
+    if not run_store.claim_family(run_id, "stockfish"):
+        current = _wait_for_family(run_store, run_id, "stockfish") or _require_run(run_store, run_id)
+        return StockfishRunResponse(
+            stockfish=current.stockfish_result,
+            stockfish_status=current.stockfish_status,
+            fallbacks_used=current.stockfish_fallbacks,
+        )
+
+    facts = AnalysisSnapshot.model_validate(run.explorer_facts or {})
+    recommended_moves = [RecommendedMove.model_validate(move) for move in facts.recommended_moves]
+    cache_status = dict(facts.cache)
+    settings = get_settings()
+    fallbacks: list[str] = []
+    try:
+        result = _run_stockfish_if_needed(
+            stockfish_service,
+            cache_store,
+            run.fen,
+            facts.source_confidence,
+            recommended_moves,
+            facts.opening.matched,
+            cache_status,
+            depth=settings.stockfish.depth,
+            binary=settings.stockfish.binary,
+        )
+    except Exception:  # noqa: BLE001 - an unavailable engine is a safe fallback
+        result = {"status": "unavailable"}
+
+    if result is None:
+        status = "skipped"
+    elif result.get("status") == "ok":
+        status = "generated"
+    else:
+        status = "fallback"
+        fallbacks.append("stockfish_unavailable")
+    run_store.save_stockfish_result(run_id, result, status, fallbacks)
+    return StockfishRunResponse(
+        stockfish=result,
+        stockfish_status=status,
+        fallbacks_used=fallbacks,
+    )
+
+
+def retrieve_rag_for_run(
+    run_id: str,
+    run_store: RunStore,
+    opening_tree: OpeningTree | None,
+    intent_router: IntentRouter | None,
+    rag_service: RagService | None,
+) -> RagContextResponse:
+    run = _require_run(run_store, run_id)
+    if run.rag_status in {"generated", "fallback", "skipped"}:
+        return RagContextResponse(
+            rag_context=[RagContext.model_validate(context) for context in run.rag_context],
+            rag_status=run.rag_status,
+            fallbacks_used=run.rag_fallbacks,
+        )
+
+    if not run_store.claim_family(run_id, "rag"):
+        current = _wait_for_family(run_store, run_id, "rag") or _require_run(run_store, run_id)
+        return RagContextResponse(
+            rag_context=[RagContext.model_validate(context) for context in current.rag_context],
+            rag_status=current.rag_status,
+            fallbacks_used=current.rag_fallbacks,
+        )
+
+    facts = AnalysisSnapshot.model_validate(run.explorer_facts or {})
+    request = AnalyzePositionRequest(
+        fen=run.fen,
+        pgn=run.pgn,
+        moves=run.moves,
+        level=run.level,
+        question=run.question,
+        rating_min=run.rating_min,
+        rating_max=run.rating_max,
+    )
+    local_match = match_opening(run.moves, run.fen)
+    fallback_text = (
+        _lichess_context(facts.opening)
+        if facts.opening.source == LICHESS_SOURCE
+        else local_match.context
+    )
+    fallbacks: list[str] = []
+    if opening_tree is None or intent_router is None or rag_service is None:
+        rag_context = [_fallback_rag_context(facts.opening, fallback_text)]
+        tree_context = _fallback_tree_context(facts.opening)
+        retrieved_contexts: tuple[RetrievedContext, ...] = ()
+        fallbacks.append("rag_unavailable")
+    else:
+        rag_context, fallbacks, tree_context, retrieved_contexts = _retrieve_rag_context(
+            request,
+            facts.opening,
+            fallback_text,
+            opening_tree,
+            intent_router,
+            rag_service,
+        )
+
+    lichess_stats = facts.lichess_stats.model_dump() if isinstance(facts.lichess_stats, LichessStats) else facts.lichess_stats
+    coach_context = build_coach_context(
+        tree_context=tree_context,
+        question=request.question,
+        retrieved_contexts=retrieved_contexts,
+        lichess_stats=lichess_stats,
+        recommended_moves=[move.model_dump() for move in facts.recommended_moves],
+        stockfish=None,
+        fallbacks=tuple([*facts.fallbacks_used, *fallbacks]),
+    )
+    status = "generated" if retrieved_contexts and not fallbacks else "fallback"
+    run_store.save_rag_context(
+        run_id,
+        [context.model_dump() for context in rag_context],
+        tree_context.to_artifact(),
+        [context.to_artifact() for context in retrieved_contexts],
+        status,
+        fallbacks,
+        coach_context.to_artifact(),
+    )
+    return RagContextResponse(
+        rag_context=rag_context,
+        rag_status=status,
+        fallbacks_used=fallbacks,
+    )
+
+
+def render_run_coach(
+    run_id: str,
+    level: str,
+    coach_service: CoachService,
+    run_store: RunStore,
+) -> CoachExplanationResponse:
+    run = _require_run(run_store, run_id)
+    if run.coach_status in {"generated", "fallback"} and run.coach_result:
+        return CoachExplanationResponse(
+            explanation=run.coach_result.get("explanation", PENDING_COACH_TEXT),
+            coach_status=run.coach_status,
+            fallbacks_used=list(run.coach_result.get("fallbacks_used", [])),
+        )
+
+    if not run_store.claim_family(run_id, "coach"):
+        current = _wait_for_family(run_store, run_id, "coach") or _require_run(run_store, run_id)
+        result = current.coach_result or {}
+        return CoachExplanationResponse(
+            explanation=result.get("explanation", PENDING_COACH_TEXT),
+            coach_status=current.coach_status,
+            fallbacks_used=list(result.get("fallbacks_used", [])),
+        )
+
+    context = coach_context_for_run(run)
+    explanation, status, fallbacks = _render_coach(context, level, coach_service)
+    run_store.save_coach_result(run_id, explanation, status, fallbacks)
+    return CoachExplanationResponse(
+        explanation=explanation,
+        coach_status=status,
+        fallbacks_used=fallbacks,
+    )
+
+
+def coach_context_for_run(run: AnalysisRun) -> CoachContext:
+    """Build a coach context entirely from persisted run artifacts."""
+    context = _coach_context_for_run(run)
+    return replace(
+        context,
+        question=run.question,
+        stockfish=run.stockfish_result,
+        fallbacks=tuple(
+            [
+                *(context.fallbacks or ()),
+                *run.stockfish_fallbacks,
+                *run.rag_fallbacks,
+            ]
+        ),
+    )
+
+
+def _coach_context_for_run(run: AnalysisRun) -> CoachContext:
+    if run.coach_context_artifact:
+        return CoachContext.from_artifact(run.coach_context_artifact)
+    facts = AnalysisSnapshot.model_validate(run.explorer_facts or {})
+    tree_context = _fallback_tree_context(facts.opening)
+    lichess_stats = facts.lichess_stats.model_dump() if isinstance(facts.lichess_stats, LichessStats) else facts.lichess_stats
+    return build_coach_context(
+        tree_context=tree_context,
+        question=run.question,
+        lichess_stats=lichess_stats,
+        recommended_moves=[move.model_dump() for move in facts.recommended_moves],
+        stockfish=run.stockfish_result,
+        fallbacks=tuple([*facts.fallbacks_used, *run.rag_fallbacks, *run.stockfish_fallbacks]),
+    )
+
+
+def _require_run(run_store: RunStore, run_id: str) -> AnalysisRun:
+    run = run_store.get_run(run_id)
+    if run is None:
+        raise AnalysisRunNotFoundError(run_id)
+    return run
+
+
+def _wait_for_explorer(run_store: RunStore, run_id: str) -> AnalysisRun | None:
+    return _wait_for_family(run_store, run_id, "explorer")
+
+
+def _wait_for_family(
+    run_store: RunStore,
+    run_id: str,
+    family: str,
+) -> AnalysisRun | None:
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline:
+        current = run_store.get_run(run_id)
+        if current is None or getattr(current, f"{family}_status") != "running":
+            return current
+        if family == "explorer" and current.explorer_facts:
+            return current
+        if family == "stockfish" and current.stockfish_status in {"generated", "fallback", "skipped"}:
+            return current
+        if family == "rag" and current.rag_status in {"generated", "fallback", "skipped"}:
+            return current
+        if family == "coach" and current.coach_status in {"generated", "fallback"}:
+            return current
+        time.sleep(0.05)
+    return run_store.get_run(run_id)
 
 
 def _rating_buckets(
@@ -590,4 +1040,3 @@ def _rag_source(opening: Opening) -> str:
     if opening.source == LICHESS_SOURCE:
         return LICHESS_SOURCE
     return "demo-pedagogical-seed"
-

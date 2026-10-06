@@ -1,5 +1,7 @@
 import logging
 
+import pytest
+
 from backend.app.core.settings import (
     Settings,
     _parse_dotenv_line,
@@ -74,7 +76,7 @@ def test_strips_milvus_uri_from_config(caplog) -> None:  # type: ignore[no-untyp
     )
 
 
-def test_strips_ollama_base_url_from_config(caplog) -> None:  # type: ignore[no-untyped-def]
+def test_keeps_provider_base_urls_in_config(caplog) -> None:  # type: ignore[no-untyped-def]
     config = {
         "embeddings": {"model": "qwen3-embedding:0.6b", "base_url": "http://from-config:11434"},
         "llm": {"model": "qwen2.5:7b-instruct", "base_url": "http://from-config:11434"},
@@ -83,13 +85,8 @@ def test_strips_ollama_base_url_from_config(caplog) -> None:  # type: ignore[no-
     with caplog.at_level(logging.WARNING, logger="backend.settings"):
         result = _without_config_secrets(config)
 
-    assert result["embeddings"] == {"model": "qwen3-embedding:0.6b"}
-    assert result["llm"] == {"model": "qwen2.5:7b-instruct"}
-    assert sum(
-        1
-        for record in caplog.records
-        if "base_url" in record.getMessage() and "is ignored" in record.getMessage()
-    ) == 2
+    assert "base_url" not in result["embeddings"]
+    assert result["llm"]["base_url"] == "http://from-config:11434"
 
 
 def test_strips_typesafe_secret_and_environment_specific_base_url_from_config(caplog) -> None:  # type: ignore[no-untyped-def]
@@ -108,6 +105,16 @@ def test_strips_typesafe_secret_and_environment_specific_base_url_from_config(ca
     assert result["typesafe"] == {"enabled": True, "model": "jev-1.13.0"}
     assert any("typesafe.api_key" in record.getMessage() for record in caplog.records)
     assert any("typesafe.base_url" in record.getMessage() for record in caplog.records)
+
+
+def test_strips_llm_api_key_from_config(caplog) -> None:  # type: ignore[no-untyped-def]
+    config = {"llm": {"provider": "nvidia", "api_key": "toml-secret"}}
+
+    with caplog.at_level(logging.WARNING, logger="backend.settings"):
+        result = _without_config_secrets(config)
+
+    assert result["llm"] == {"provider": "nvidia"}
+    assert any("llm.api_key" in record.getMessage() for record in caplog.records)
 
 
 def test_with_secret_env_prefers_mongodb_uri_from_environment(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -134,7 +141,7 @@ def test_with_secret_env_keeps_default_without_mongodb_uri(monkeypatch) -> None:
     assert "uri" not in result["mongodb"]
 
 
-def test_with_secret_env_sets_milvus_uri_and_ollama_base_url(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_with_secret_env_sets_milvus_uri_and_ollama_embedding_url(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     values = {"MILVUS_URI": "http://milvus:19530", "OLLAMA_BASE_URL": "http://ollama:11434"}
     monkeypatch.delenv("MONGODB_URI", raising=False)
     monkeypatch.delenv("LICHESS_TOKEN", raising=False)
@@ -150,7 +157,7 @@ def test_with_secret_env_sets_milvus_uri_and_ollama_base_url(monkeypatch) -> Non
     assert result["milvus"]["uri"] == "http://milvus:19530"
     assert result["milvus"]["collection"] == "chess_knowledge"
     assert result["embeddings"]["base_url"] == "http://ollama:11434"
-    assert result["llm"]["base_url"] == "http://ollama:11434"
+    assert "base_url" not in result.get("llm", {})
 
 
 def test_with_secret_env_sets_typesafe_api_key_and_base_url(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -172,6 +179,39 @@ def test_with_secret_env_sets_typesafe_api_key_and_base_url(monkeypatch) -> None
     assert result["typesafe"]["base_url"] == "https://gateway.example.test/typesafe"
 
 
+def test_with_secret_env_sets_selected_provider_secret(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    values = {
+        "OLLAMA_BASE_URL": "http://ollama:11434",
+        "MISTRAL_API_KEY": "mistral-test-key",
+    }
+    for name in values:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(
+        "backend.app.core.settings._read_dotenv_value",
+        lambda name: values.get(name),
+    )
+
+    result = _with_secret_env(
+        {
+            "llm": {
+                "provider": "mistral",
+                "providers": {
+                    "mistral": {
+                        "base_url": "https://api.mistral.ai/v1",
+                        "model": "mistral-large-latest",
+                    }
+                },
+            }
+        }
+    )
+
+    assert result["llm"]["provider"] == "mistral"
+    assert result["llm"]["base_url"] == "https://api.mistral.ai/v1"
+    assert result["llm"]["model"] == "mistral-large-latest"
+    assert result["llm"]["api_key"] == "mistral-test-key"
+    assert result["embeddings"]["base_url"] == "http://ollama:11434"
+
+
 def test_settings_expose_rag_defaults() -> None:
     settings = Settings()
 
@@ -185,6 +225,8 @@ def test_settings_expose_rag_defaults() -> None:
     assert settings.rag.granularity == "section"
     assert settings.llm.model == "qwen2.5:7b-instruct"
     assert settings.llm.base_url == "http://localhost:11434"
+    assert settings.llm.provider == "ollama"
+    assert settings.llm.api_key is None
     assert settings.llm.num_ctx == 4096
     assert settings.llm.think is False
     assert settings.llm.keep_alive == "5m"
@@ -195,6 +237,33 @@ def test_settings_expose_rag_defaults() -> None:
     assert settings.typesafe.api_key is None
     assert settings.typesafe.high_confidence == 0.75
     assert settings.typesafe.medium_confidence == 0.5
+
+
+def test_provider_requires_its_own_secret() -> None:
+    with pytest.raises(ValueError, match="nvidia provider"):
+        Settings.model_validate(
+            {
+                "llm": {
+                    "provider": "nvidia",
+                    "base_url": "https://integrate.api.nvidia.com/v1",
+                    "model": "nvidia/test",
+                }
+            }
+        )
+
+
+def test_ollama_rejects_a_cloud_api_key() -> None:
+    with pytest.raises(ValueError, match="not valid for the ollama provider"):
+        Settings.model_validate(
+            {
+                "llm": {
+                    "provider": "ollama",
+                    "base_url": "http://localhost:11434",
+                    "model": "qwen2.5:7b-instruct",
+                    "api_key": "should-not-be-used",
+                }
+            }
+        )
 
 
 def test_keeps_config_without_lichess_token_unchanged() -> None:

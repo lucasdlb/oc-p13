@@ -42,13 +42,11 @@ class JevSectionClassifier:
             raise RuntimeError("TYPESAFE_API_KEY is required when JEV is enabled")
 
         response = self._client.post(
-            _join_url(self._settings.base_url, "/v1/choice"),
+            _join_url(self._settings.base_url, "/v1/systemone"),
             headers={"Authorization": f"Bearer {self._settings.api_key}"},
             json={
                 "model": self._settings.model,
-                "question": "Classify this chess-opening prose section. Return exactly one label.",
-                "choices": list(INTENT_VOCABULARY),
-                "context": {
+                "state": {
                     "page_id": row.get("page_id"),
                     "canonical_title": row.get("canonical_title"),
                     "section_title": row.get("section_title"),
@@ -58,30 +56,40 @@ class JevSectionClassifier:
                     "eco_code": row.get("eco_code"),
                     "opening_node_id": row.get("opening_node_id"),
                 },
+                "questions": {
+                    "label": {
+                        "type": "choice",
+                        "instructions": "Classify this chess-opening prose section. Choose exactly one label.",
+                        "criteria": {label: label for label in INTENT_VOCABULARY},
+                    }
+                },
             },
         )
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, dict):
-            raise ValueError("JEV response must be an object")
-        label = payload.get("choice")
-        confidence = payload.get("confidence")
+            raise ValueError("TypeSafe response must be an object")
+        answers = payload.get("answers")
+        if not isinstance(answers, dict):
+            raise ValueError("TypeSafe response must contain an answers object")
+        answer = answers.get("label")
+        if not isinstance(answer, dict):
+            raise ValueError("TypeSafe response must contain an answer named 'label'")
+        if answer.get("type") != "choice":
+            raise ValueError("TypeSafe answer for 'label' must be a choice")
+        label = answer.get("choice")
+        confidence = answer.get("confidence")
         if not isinstance(label, str):
-            raise ValueError("JEV choice must be a string")
+            raise ValueError("TypeSafe choice must be a string")
         if not isinstance(confidence, int | float):
-            raise ValueError("JEV confidence must be numeric")
-        reason_codes = payload.get("reason_codes", ())
-        if reason_codes is None:
-            reason_codes = ()
-        if not isinstance(reason_codes, list) or not all(isinstance(reason, str) for reason in reason_codes):
-            raise ValueError("JEV reason_codes must be a string list")
+            raise ValueError("TypeSafe confidence must be numeric")
         model = payload.get("model", self._settings.model)
         if model is not None and not isinstance(model, str):
-            raise ValueError("JEV model must be a string")
+            raise ValueError("TypeSafe model must be a string")
         return BenchClassifierResult(
             label=label,
             confidence=float(confidence),
-            reason_codes=tuple(reason_codes),
+            reason_codes=("jev_label",),
             provider="typesafe",
             model=model,
             config_id=self._config_id,
