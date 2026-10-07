@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "description": "Structured coach-generation assertions.",
+  "cases": [
+    {
+      "id": "gen-french-aggressive-001",
+      "question": "Quelle est la réponse la plus agressive ?",
+      "moves": ["e2e4", "e7e6"],
+      "expected_intent": "compare_moves",
+      "must_cite_uci": ["e4e5", "f2f4"],
+      "forbidden_verbs_unless_sourced": ["attaque", "défie", "menace"],
+      "must_name_criterion": true,
+      "conclusion_max_occurrences": 1,
+      "expected_fallbacks": [],
+      "word_range": [100, 220]
+    }
+  ]
+}
