@@ -331,10 +331,10 @@ def test_score_run_stratifies_real_dataset(dataset) -> None:
     assert len(report["per_case"]) == dataset["counts"]["total"]
 
     overall = report["overall"]
-    assert overall["case_count"] == 20
+    assert overall["case_count"] == 32
     assert overall["current_context_hit_rate"] == 0.0
     # No documents: out_of_theory/unsupported cases are usable, in_theory are not.
-    assert overall["coach_usable_context_rate"] == pytest.approx(4 / 20)
+    assert overall["coach_usable_context_rate"] == pytest.approx(6 / 32)
 
 
 def test_score_run_reports_latency_when_provided(dataset) -> None:
