@@ -5,18 +5,35 @@ retrieval planning, retrieved chunks, and coach-facing context. They deliberatel
 avoid Milvus, JEV, FastAPI, and LangGraph dependencies.
 """
 
-from dataclasses import dataclass
 from typing import Literal
 
-from backend.app.services.intent_router import RetrievalIntent
+from pydantic import BaseModel, ConfigDict, model_validator
+
+
+RetrievalIntent = Literal[
+    "explain_current_position",
+    "ask_next_moves",
+    "ask_specific_candidate",
+    "evaluate_move_quality",
+    "ask_trap",
+    "ask_mistake",
+    "ask_history",
+    "ask_unsupported",
+    "ask_out_of_theory",
+    "general_principle",
+    "unclear",
+]
 
 
 RelationToPosition = Literal["current", "child", "parent", "general", "fallback"]
 OpeningTreeState = Literal["matched", "out_of_theory", "unsupported"]
 
 
-@dataclass(frozen=True)
-class OpeningTreeNodeContext:
+class ContractModel(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+
+class OpeningTreeNodeContext(ContractModel):
     node_id: str
     eco_code: str
     opening_name: str
@@ -30,21 +47,13 @@ class OpeningTreeNodeContext:
 
     def to_artifact(self) -> dict:
         return {
-            "node_id": self.node_id,
-            "eco_code": self.eco_code,
-            "opening_name": self.opening_name,
-            "pgn": self.pgn,
-            "uci": list(self.uci),
-            "san": list(self.san),
-            "fen": self.fen,
-            "epd": self.epd,
-            "depth": self.depth,
-            "entry_move": self.entry_move,
+            "node_id": self.node_id, "eco_code": self.eco_code, "opening_name": self.opening_name,
+            "pgn": self.pgn, "uci": list(self.uci), "san": list(self.san), "fen": self.fen,
+            "epd": self.epd, "depth": self.depth, "entry_move": self.entry_move,
         }
 
 
-@dataclass(frozen=True)
-class OpeningTreeContext:
+class OpeningTreeContext(ContractModel):
     state: OpeningTreeState = "matched"
     current: OpeningTreeNodeContext | None = None
     parent: OpeningTreeNodeContext | None = None
@@ -63,8 +72,7 @@ class OpeningTreeContext:
         }
 
 
-@dataclass(frozen=True)
-class RetrievalBucket:
+class RetrievalBucket(ContractModel):
     name: str
     relation_to_position: RelationToPosition
     node_ids: tuple[str, ...] = ()
@@ -91,77 +99,13 @@ class RetrievalBucket:
         }
 
 
-@dataclass(frozen=True)
-class RetrievalPlan:
+class RetrievalPlan(ContractModel):
     intent: RetrievalIntent
     state: OpeningTreeState
     buckets: tuple[RetrievalBucket, ...]
     excluded_node_ids: tuple[str, ...] = ()
     reason: str | None = None
     requires_stockfish: bool = False
-
-    @classmethod
-    def current_only(
-        cls,
-        *,
-        tree_context: OpeningTreeContext,
-        intent: RetrievalIntent = "explain_current_position",
-        reason: str = "current_only",
-    ) -> "RetrievalPlan":
-        node_ids = (tree_context.current.node_id,) if tree_context.current else ()
-        return cls(
-            intent=intent,
-            state=tree_context.state,
-            reason=reason,
-            excluded_node_ids=tree_context.excluded_descendant_node_ids,
-            requires_stockfish=False,
-            buckets=(
-                RetrievalBucket(
-                    name="current",
-                    relation_to_position="current",
-                    node_ids=node_ids,
-                    eco_code=tree_context.current.eco_code if tree_context.current else None,
-                    limit=4,
-                ),
-            ),
-        )
-
-    @classmethod
-    def with_children(
-        cls,
-        *,
-        tree_context: OpeningTreeContext,
-        intent: RetrievalIntent = "ask_next_moves",
-        reason: str = "child_allowed",
-    ) -> "RetrievalPlan":
-        current_ids = (tree_context.current.node_id,) if tree_context.current else ()
-        child_ids = tuple(child.node_id for child in tree_context.children)
-        entry_moves = tuple(child.entry_move for child in tree_context.children if child.entry_move)
-        return cls(
-            intent=intent,
-            state=tree_context.state,
-            reason=reason,
-            excluded_node_ids=tree_context.excluded_descendant_node_ids,
-            requires_stockfish=False,
-            buckets=(
-                RetrievalBucket(
-                    name="current",
-                    relation_to_position="current",
-                    node_ids=current_ids,
-                    eco_code=tree_context.current.eco_code if tree_context.current else None,
-                    limit=4,
-                ),
-                RetrievalBucket(
-                    name="children",
-                    relation_to_position="child",
-                    node_ids=child_ids,
-                    eco_code=tree_context.children[0].eco_code if len(tree_context.children) == 1 else None,
-                    limit=3,
-                    entry_move=entry_moves[0] if len(entry_moves) == 1 else None,
-                    query_hint="conditional continuations",
-                ),
-            ),
-        )
 
     @classmethod
     def history_only(cls, *, tree_context: OpeningTreeContext) -> "RetrievalPlan":
@@ -215,8 +159,7 @@ class RetrievalPlan:
         }
 
 
-@dataclass(frozen=True)
-class RetrievedContext:
+class RetrievedContext(ContractModel):
     chunk_id: str
     text: str
     source: str
@@ -261,8 +204,7 @@ class RetrievedContext:
         }
 
 
-@dataclass(frozen=True)
-class CoachPositionContext:
+class CoachPositionContext(ContractModel):
     state: OpeningTreeState
     opening_name: str | None
     eco_code: str | None
@@ -282,13 +224,7 @@ class CoachPositionContext:
 
     @classmethod
     def from_artifact(cls, payload: dict) -> "CoachPositionContext":
-        return cls(
-            state=payload.get("state", "matched"),
-            opening_name=payload.get("opening_name"),
-            eco_code=payload.get("eco_code"),
-            pgn=payload.get("pgn"),
-            fen=payload.get("fen"),
-        )
+        return cls.model_validate(payload)
 
     def to_artifact(self) -> dict:
         return {
@@ -300,8 +236,7 @@ class CoachPositionContext:
         }
 
 
-@dataclass(frozen=True)
-class CoachSourceAttribution:
+class CoachSourceAttribution(ContractModel):
     chunk_id: str
     source: str
     source_url: str | None
@@ -328,17 +263,7 @@ class CoachSourceAttribution:
 
     @classmethod
     def from_artifact(cls, payload: dict) -> "CoachSourceAttribution":
-        return cls(
-            chunk_id=payload["chunk_id"],
-            source=payload.get("source", ""),
-            source_url=payload.get("source_url"),
-            license_or_terms=payload.get("license_or_terms"),
-            page_id=payload.get("page_id", ""),
-            canonical_title=payload.get("canonical_title", ""),
-            section_title=payload.get("section_title"),
-            section_index=payload.get("section_index"),
-            part_index=payload.get("part_index", 0),
-        )
+        return cls.model_validate(payload)
 
     def to_artifact(self) -> dict:
         return {
@@ -354,20 +279,22 @@ class CoachSourceAttribution:
         }
 
 
-@dataclass(frozen=True)
-class CoachProsePassage:
+class CoachProsePassage(ContractModel):
     text: str
     relation_to_position: RelationToPosition
     source_chunk_id: str
     opening_name: str | None = None
     eco_code: str | None = None
     entry_move: str | None = None
+    is_history: bool = False
 
-    def __post_init__(self) -> None:
+    @model_validator(mode="after")
+    def validate_relation(self) -> "CoachProsePassage":
         if self.relation_to_position == "child" and not self.entry_move:
             raise ValueError("child coach prose requires entry_move for conditional labelling")
         if self.relation_to_position == "current" and self.entry_move is not None:
             raise ValueError("current coach prose cannot carry entry_move")
+        return self
 
     @classmethod
     def from_retrieved_context(cls, context: RetrievedContext) -> "CoachProsePassage":
@@ -378,21 +305,15 @@ class CoachProsePassage:
             source_chunk_id=context.chunk_id,
             opening_name=context.opening_name,
             eco_code=context.eco_code,
+            is_history=context.is_history,
         )
 
     @classmethod
     def from_artifact(cls, payload: dict) -> "CoachProsePassage":
-        return cls(
-            text=payload["text"],
-            relation_to_position=payload.get("relation_to_position", "current"),
-            source_chunk_id=payload["source_chunk_id"],
-            opening_name=payload.get("opening_name"),
-            eco_code=payload.get("eco_code"),
-            entry_move=payload.get("entry_move"),
-        )
+        return cls.model_validate(payload)
 
     def to_artifact(self) -> dict:
-        return {
+        artifact = {
             "text": self.text,
             "relation_to_position": self.relation_to_position,
             "entry_move": self.entry_move,
@@ -400,35 +321,30 @@ class CoachProsePassage:
             "opening_name": self.opening_name,
             "eco_code": self.eco_code,
         }
+        if self.is_history:
+            artifact["is_history"] = True
+        return artifact
 
 
-@dataclass(frozen=True)
-class CoachCandidateContinuation:
+class CoachCandidateContinuation(ContractModel):
     entry_move: str
     opening_name: str | None
     eco_code: str | None
     prose: tuple[CoachProsePassage, ...]
     entry_uci: str | None = None
 
-    def __post_init__(self) -> None:
+    @model_validator(mode="after")
+    def validate_prose(self) -> "CoachCandidateContinuation":
         for passage in self.prose:
             if passage.relation_to_position != "child":
                 raise ValueError("candidate continuations can contain only child prose")
             if passage.entry_move != self.entry_move:
                 raise ValueError("child prose entry_move must match candidate continuation")
+        return self
 
     @classmethod
     def from_artifact(cls, payload: dict) -> "CoachCandidateContinuation":
-        return cls(
-            entry_move=payload["entry_move"],
-            opening_name=payload.get("opening_name"),
-            eco_code=payload.get("eco_code"),
-            entry_uci=payload.get("entry_uci"),
-            prose=tuple(
-                CoachProsePassage.from_artifact(passage)
-                for passage in payload.get("prose", [])
-            ),
-        )
+        return cls.model_validate(payload)
 
     def to_artifact(self) -> dict:
         return {
@@ -440,20 +356,45 @@ class CoachCandidateContinuation:
         }
 
 
-@dataclass(frozen=True)
-class CoachContext:
+class RecommendedMove(ContractModel):
+    uci: str
+    san: str
+    description: str = ""
+    source: str = ""
+    games: int | None = None
+    white: float | None = None
+    draws: float | None = None
+    black: float | None = None
+    average_rating: int | None = None
+    move_share: float | None = None
+    relevant: bool = True
+    badges: list[str] | None = None
+
+
+class StockfishEval(ContractModel):
+    status: str | None = None
+    best_move: str | None = None
+    score: dict | None = None
+    mate: int | None = None
+    pv: tuple[str, ...] = ()
+    depth: int | None = None
+    model_config = ConfigDict(frozen=True, extra="allow")
+
+
+class CoachContext(ContractModel):
     current_position: CoachPositionContext
     question: str | None = None
     current_prose: tuple[CoachProsePassage, ...] = ()
+    supporting_prose: tuple[CoachProsePassage, ...] = ()
     candidate_continuations: tuple[CoachCandidateContinuation, ...] = ()
     source_attributions: tuple[CoachSourceAttribution, ...] = ()
     lichess_stats: dict | None = None
-    recommended_moves: list[dict] = ()
-    stockfish: dict | None = None
+    recommended_moves: tuple[RecommendedMove, ...] = ()
+    stockfish: StockfishEval | None = None
     fallbacks: tuple[str, ...] = ()
 
     def to_artifact(self) -> dict:
-        return {
+        artifact = {
             "current_position": self.current_position.to_artifact(),
             "question": self.question,
             "current_prose": [passage.to_artifact() for passage in self.current_prose],
@@ -464,33 +405,25 @@ class CoachContext:
                 attribution.to_artifact() for attribution in self.source_attributions
             ],
             "lichess_stats": self.lichess_stats,
-            "recommended_moves": self.recommended_moves,
-            "stockfish": self.stockfish,
+            "recommended_moves": [move.model_dump() for move in self.recommended_moves],
+            "stockfish": (
+                {
+                    key: value
+                    for key, value in self.stockfish.model_dump(exclude_none=True).items()
+                    if value not in ((), [])
+                }
+                if self.stockfish
+                else None
+            ),
             "fallbacks": list(self.fallbacks),
         }
+        if self.supporting_prose:
+            artifact["supporting_prose"] = [passage.to_artifact() for passage in self.supporting_prose]
+        return artifact
 
     @classmethod
     def from_artifact(cls, payload: dict) -> "CoachContext":
-        return cls(
-            current_position=CoachPositionContext.from_artifact(payload.get("current_position", {})),
-            question=payload.get("question"),
-            current_prose=tuple(
-                CoachProsePassage.from_artifact(passage)
-                for passage in payload.get("current_prose", [])
-            ),
-            candidate_continuations=tuple(
-                CoachCandidateContinuation.from_artifact(continuation)
-                for continuation in payload.get("candidate_continuations", [])
-            ),
-            source_attributions=tuple(
-                CoachSourceAttribution.from_artifact(attribution)
-                for attribution in payload.get("source_attributions", [])
-            ),
-            lichess_stats=payload.get("lichess_stats"),
-            recommended_moves=payload.get("recommended_moves", []),
-            stockfish=payload.get("stockfish"),
-            fallbacks=tuple(payload.get("fallbacks", [])),
-        )
+        return cls.model_validate(payload)
 
 
 def build_coach_context(
@@ -499,19 +432,45 @@ def build_coach_context(
     question: str | None = None,
     retrieved_contexts: tuple[RetrievedContext, ...] = (),
     lichess_stats: dict | None = None,
-    recommended_moves: list[dict] | None = None,
-    stockfish: dict | None = None,
+    recommended_moves: list[dict] | tuple[RecommendedMove, ...] | None = None,
+    stockfish: dict | StockfishEval | None = None,
     fallbacks: tuple[str, ...] = (),
 ) -> CoachContext:
     current_prose: list[CoachProsePassage] = []
     child_prose_by_move: dict[str, list[CoachProsePassage]] = {}
-    source_attributions: list[CoachSourceAttribution] = []
+    supporting_prose: list[CoachProsePassage] = []
+    source_attributions_by_id: dict[str, CoachSourceAttribution] = {}
+    child_by_node_id = {child.node_id: child for child in tree_context.children}
 
     for context in retrieved_contexts:
-        passage = CoachProsePassage.from_retrieved_context(context)
-        source_attributions.append(CoachSourceAttribution.from_retrieved_context(context))
+        entry_move = context.entry_move
+        if context.relation_to_position == "child" and not entry_move:
+            child = child_by_node_id.get(context.opening_node_id or "")
+            entry_move = child.entry_move if child else None
+        if context.relation_to_position == "child" and not entry_move:
+            import logging
+
+            logging.getLogger("backend.retrieval_contracts").warning(
+                "dropping child passage without entry move: %s", context.chunk_id
+            )
+            continue
+        passage = CoachProsePassage(
+            text=context.text,
+            relation_to_position=context.relation_to_position,
+            entry_move=entry_move,
+            source_chunk_id=context.chunk_id,
+            opening_name=context.opening_name,
+            eco_code=context.eco_code,
+            is_history=context.is_history or context.intent == "history",
+        )
+        source_attributions_by_id.setdefault(
+            context.chunk_id,
+            CoachSourceAttribution.from_retrieved_context(context),
+        )
         if passage.relation_to_position == "child":
-            child_prose_by_move.setdefault(passage.entry_move or "", []).append(passage)
+            child_prose_by_move.setdefault(passage.entry_move, []).append(passage)
+        elif passage.is_history or passage.relation_to_position in {"parent", "general", "fallback"}:
+            supporting_prose.append(passage)
         elif passage.relation_to_position == "current":
             current_prose.append(passage)
 
@@ -535,10 +494,11 @@ def build_coach_context(
         current_position=CoachPositionContext.from_tree_context(tree_context),
         question=question,
         current_prose=tuple(current_prose),
+        supporting_prose=tuple(supporting_prose),
         candidate_continuations=candidate_continuations,
-        source_attributions=tuple(source_attributions),
+        source_attributions=tuple(source_attributions_by_id.values()),
         lichess_stats=lichess_stats,
-        recommended_moves=recommended_moves or [],
-        stockfish=stockfish,
+        recommended_moves=tuple(RecommendedMove.model_validate(move) for move in (recommended_moves or ())),
+        stockfish=stockfish if isinstance(stockfish, StockfishEval) else StockfishEval.model_validate(stockfish) if stockfish else None,
         fallbacks=fallbacks,
     )

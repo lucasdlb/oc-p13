@@ -16,24 +16,11 @@ from typing import Literal, Protocol
 import httpx
 
 from backend.app.core.settings import TypeSafeSettings
+from backend.app.services.retrieval_contracts import RetrievalIntent
 
 
 logger = logging.getLogger("backend.intent_router")
 
-
-RetrievalIntent = Literal[
-    "explain_current_position",
-    "ask_next_moves",
-    "ask_specific_candidate",
-    "evaluate_move_quality",
-    "ask_trap",
-    "ask_mistake",
-    "ask_history",
-    "ask_unsupported",
-    "ask_out_of_theory",
-    "general_principle",
-    "unclear",
-]
 
 RouterSource = Literal[
     "rule_fallback",

@@ -124,7 +124,8 @@ def _generate(active: _ActiveCoachStream, original_run: AnalysisRun) -> None:
         if callable(stream_explain):
             iterator = stream_explain(context, level=active.level)
         else:
-            iterator = iter([active.coach_service.explain(context, level=active.level)])
+            result = active.coach_service.explain(context, level=active.level)
+            iterator = iter([result.text])
         for chunk in iterator:
             if active.cancel_event.is_set():
                 return
@@ -133,7 +134,7 @@ def _generate(active: _ActiveCoachStream, original_run: AnalysisRun) -> None:
             chunks.append(chunk)
             _publish(active, "token", {"text": chunk})
 
-        explanation = prepare_coach_output("".join(chunks).strip(), context)
+        explanation = prepare_coach_output("".join(chunks).strip(), context).text
         if active.cancel_event.is_set():
             return
         if not explanation:
@@ -155,7 +156,7 @@ def _generate(active: _ActiveCoachStream, original_run: AnalysisRun) -> None:
     except CoachFallbackError as exc:
         if active.cancel_event.is_set():
             return
-        safe_text = prepare_coach_output(exc.text, context) if isinstance(context, CoachContext) else exc.text
+        safe_text = prepare_coach_output(exc.text, context).text if isinstance(context, CoachContext) else exc.text
         active.run_store.save_coach_result(
             active.run_id,
             safe_text,

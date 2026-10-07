@@ -744,7 +744,7 @@ def test_analyze_position_question_can_trigger_next_move_child_retrieval() -> No
     assert rag_response.json()["rag_context"][0]["relation_to_position"] == "child"
     assert rag_response.json()["rag_context"][0]["entry_move"] == "Nf6"
     coach = _fetch_coach(body["session_id"], body["analysis_key"], "intermediaire")
-    assert "Si les Noirs jouent [[move:uci=g8f6,label=...Nf6]]" in coach["explanation"]
+    assert "Si le camp au trait joue Nf6" in coach["explanation"]
     assert "After ...Nf6, the Berlin is a possible continuation." in coach["explanation"]
     assert "Dans la position actuelle" not in coach["explanation"]
 
@@ -921,7 +921,7 @@ def test_analyze_position_keeps_success_when_rag_retrieval_fails() -> None:
     coach = _fetch_coach(body["session_id"], body["analysis_key"], "debutant")
     assert coach["explanation"] == (
         "Je n'ai pas assez de contexte source pour formuler une explication fiable. "
-        "Je peux seulement signaler la ligne identifiee: King's Pawn Game."
+            "Je peux seulement signaler la ligne identifiée : King's Pawn Game."
     )
     assert "occupe le centre" not in coach["explanation"]
     assert "rag_unavailable" in rag_response.json()["fallbacks_used"]
@@ -948,7 +948,7 @@ def test_analyze_position_prefers_lichess_opening_over_local_seed() -> None:
     coach = _fetch_coach(body["session_id"], body["analysis_key"], "intermediaire")
     assert coach["explanation"] == (
         "Je n'ai pas assez de contexte source pour formuler une explication fiable. "
-        "Je peux seulement signaler la ligne identifiee: King's Pawn."
+            "Je peux seulement signaler la ligne identifiée : King's Pawn."
     )
 
 

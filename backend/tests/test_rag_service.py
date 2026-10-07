@@ -36,6 +36,47 @@ BERLIN = OpeningTreeNodeContext(
 )
 
 
+def _current_plan(tree_context: OpeningTreeContext, *, reason: str = "current_only") -> RetrievalPlan:
+    current = tree_context.current
+    return RetrievalPlan(
+        intent="explain_current_position",
+        state=tree_context.state,
+        reason=reason,
+        excluded_node_ids=tree_context.excluded_descendant_node_ids,
+        buckets=(
+            RetrievalBucket(
+                name="current",
+                relation_to_position="current",
+                node_ids=(current.node_id,) if current else (),
+                eco_code=current.eco_code if current else None,
+                limit=4,
+            ),
+        ),
+    )
+
+
+def _children_plan(tree_context: OpeningTreeContext) -> RetrievalPlan:
+    return RetrievalPlan(
+        intent="ask_next_moves",
+        state=tree_context.state,
+        buckets=(
+            RetrievalBucket(
+                name="current",
+                relation_to_position="current",
+                node_ids=(tree_context.current.node_id,) if tree_context.current else (),
+                limit=4,
+            ),
+            RetrievalBucket(
+                name="children",
+                relation_to_position="child",
+                node_ids=tuple(child.node_id for child in tree_context.children),
+                limit=3,
+                query_hint="conditional continuations",
+            ),
+        ),
+    )
+
+
 class FakeEmbeddingProvider:
     dimension = 4
 
@@ -109,7 +150,7 @@ def _chunk(identifier: str, text: str, **metadata: object) -> ScoredChunk:
 
 
 def test_current_only_plan_searches_only_current_node_and_preserves_attribution() -> None:
-    plan = RetrievalPlan.current_only(
+    plan = _current_plan(
         tree_context=OpeningTreeContext(current=RUY, children=(BERLIN,), excluded_descendant_node_ids=("deep-node",)),
         reason="safe_default",
     )
@@ -141,7 +182,7 @@ def test_current_only_plan_searches_only_current_node_and_preserves_attribution(
 
 
 def test_current_bucket_falls_back_to_eco_when_chunks_are_not_node_mapped() -> None:
-    plan = RetrievalPlan.current_only(tree_context=OpeningTreeContext(current=RUY))
+    plan = _current_plan(OpeningTreeContext(current=RUY))
     store = FakeStore(
         eco_responses={"C60": [_chunk("current-eco", "Ruy Lopez ideas", opening_node_id=None)]}
     )
@@ -218,7 +259,7 @@ def test_child_allowed_plan_labels_child_context_as_conditional() -> None:
 
 
 def test_bucket_limits_are_applied_before_merge() -> None:
-    plan = RetrievalPlan.with_children(tree_context=OpeningTreeContext(current=RUY, children=(BERLIN,)))
+    plan = _children_plan(OpeningTreeContext(current=RUY, children=(BERLIN,)))
     store = FakeStore(
         {
             ("ruy-node",): [_chunk("current-1", "one"), _chunk("current-2", "two")],
@@ -244,7 +285,7 @@ def test_bucket_limits_are_applied_before_merge() -> None:
 
 
 def test_reranking_excludes_deep_descendants_and_emits_diagnostics() -> None:
-    plan = RetrievalPlan.current_only(
+    plan = _current_plan(
         tree_context=OpeningTreeContext(current=RUY, excluded_descendant_node_ids=("deep-node",)),
     )
     store = FakeStore(
@@ -281,7 +322,7 @@ def test_reranking_excludes_deep_descendants_and_emits_diagnostics() -> None:
 
 
 def test_reranking_suppresses_history_and_misc_unless_requested() -> None:
-    plan = RetrievalPlan.current_only(tree_context=OpeningTreeContext(current=RUY))
+    plan = _current_plan(OpeningTreeContext(current=RUY))
     store = FakeStore(
         {
             ("ruy-node",): [
@@ -341,7 +382,7 @@ def test_current_explanation_keeps_current_prose_above_child_prose() -> None:
 
 
 def test_reranking_deduplicates_page_section_results_preserving_source_attribution() -> None:
-    plan = RetrievalPlan.current_only(tree_context=OpeningTreeContext(current=RUY))
+    plan = _current_plan(OpeningTreeContext(current=RUY))
     store = FakeStore(
         {
             ("ruy-node",): [
@@ -396,7 +437,7 @@ def test_history_and_general_buckets_use_expected_filters() -> None:
 def test_embedding_failure_returns_empty_context_with_fallback_metadata() -> None:
     service = RagService(embedding_provider=FakeEmbeddingProvider(fail=True), store=FakeStore())
 
-    result = service.retrieve(RetrievalPlan.current_only(tree_context=OpeningTreeContext(current=RUY)), "query")
+    result = service.retrieve(_current_plan(OpeningTreeContext(current=RUY)), "query")
 
     assert result.contexts == ()
     assert result.fallback_reasons == ("rag_embedding_unavailable",)
@@ -405,7 +446,7 @@ def test_embedding_failure_returns_empty_context_with_fallback_metadata() -> Non
 def test_store_failure_returns_empty_context_with_fallback_metadata() -> None:
     service = RagService(embedding_provider=FakeEmbeddingProvider(), store=FailingStore())
 
-    result = service.retrieve(RetrievalPlan.current_only(tree_context=OpeningTreeContext(current=RUY)), "query")
+    result = service.retrieve(_current_plan(OpeningTreeContext(current=RUY)), "query")
 
     assert result.contexts == ()
     assert result.fallback_reasons == ("rag_store_unavailable",)

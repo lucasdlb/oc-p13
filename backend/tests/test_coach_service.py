@@ -1,8 +1,8 @@
-from dataclasses import replace
+from dataclasses import replace as dataclass_replace
 
 import pytest
 
-from backend.app.services.coach import CoachFallbackError, ConservativeCoachService, LlmCoachService
+from backend.app.services.coach import ConservativeCoachService, LlmCoachService, prepare_coach_output
 from backend.app.services.llm import (
     FakeLLMProvider,
     LLMProviderEmptyError,
@@ -16,6 +16,12 @@ from backend.app.services.retrieval_contracts import (
     CoachProsePassage,
     CoachSourceAttribution,
 )
+
+
+def replace(obj, /, **changes):
+    if hasattr(obj, "model_copy"):
+        return obj.model_copy(update=changes)
+    return dataclass_replace(obj, **changes)
 
 
 SOURCE = CoachSourceAttribution(
@@ -83,12 +89,12 @@ def _context(*, sources: tuple[CoachSourceAttribution, ...] = (SOURCE, CHILD_SOU
 
 
 def test_conservative_coach_renders_current_and_child_prose_separately() -> None:
-    explanation = ConservativeCoachService().explain(_context(), level="intermediaire")
+    explanation = ConservativeCoachService().explain(_context(), level="intermediaire").text
 
     assert "Ruy Lopez (C60)" in explanation
     assert "Dans la position actuelle" in explanation
     assert "The Ruy Lopez increases pressure on e5" in explanation
-    assert "Si les Noirs jouent ...Nf6" in explanation
+    assert "Si le camp au trait joue ...Nf6" in explanation
     assert "The Berlin Defense begins" in explanation
     assert "[source: Plans, CC BY-SA 4.0]" in explanation
     assert "[source: Berlin defence, CC BY-SA 4.0]" in explanation
@@ -104,17 +110,17 @@ def test_conservative_coach_keeps_child_move_conditional_and_side_aware() -> Non
         candidate_continuations=(replace(_context().candidate_continuations[0], entry_uci="g8f6"),),
     )
 
-    explanation = ConservativeCoachService().explain(context, level="intermediaire")
+    explanation = ConservativeCoachService().explain(context, level="intermediaire").text
 
     assert "Si les Noirs jouent [[move:uci=g8f6,label=...Nf6]]" in explanation
 
 
 def test_conservative_coach_falls_back_without_source_attribution() -> None:
-    explanation = ConservativeCoachService().explain(_context(sources=(SOURCE,)), level="debutant")
+    explanation = ConservativeCoachService().explain(_context(sources=(SOURCE,)), level="debutant").text
 
     assert explanation == (
         "Je n'ai pas assez de contexte source pour formuler une explication fiable. "
-        "Je peux seulement signaler la ligne identifiee: Ruy Lopez."
+        "Je peux seulement signaler la ligne identifiée : Ruy Lopez."
     )
 
 
@@ -139,7 +145,7 @@ def test_llm_coach_returns_synthesized_prose_with_citations() -> None:
     response = "Explication synthetisee. [source: Plans, CC BY-SA 4.0]"
     service = LlmCoachService(provider=FakeLLMProvider(response=response))
 
-    explanation = service.explain(_context(), level="intermediaire")
+    explanation = service.explain(_context(), level="intermediaire").text
 
     assert explanation == response
 
@@ -148,7 +154,7 @@ def test_llm_coach_preserves_display_formatting() -> None:
     response = "## Plan simple\n\n**e5** controle le centre.\n\n- Developper une piece\n- Roquer rapidement"
     service = LlmCoachService(provider=FakeLLMProvider(response=response))
 
-    explanation = service.explain(_context(), level="debutant")
+    explanation = service.explain(_context(), level="debutant").text
 
     assert explanation == response
 
@@ -169,7 +175,7 @@ def test_llm_coach_adds_interactive_references_when_model_omits_dsl() -> None:
     explanation = LlmCoachService(provider=FakeLLMProvider(response=response)).explain(
         context,
         level="debutant",
-    )
+    ).text
 
     assert "[[square:sq=e5,label=e5]]" in explanation
     assert "[[move:uci=e7e5,label=e5]]" in explanation
@@ -195,7 +201,7 @@ def test_llm_coach_annotates_all_allowed_uci_and_san_move_mentions() -> None:
     explanation = LlmCoachService(provider=FakeLLMProvider(response=response)).explain(
         context,
         level="debutant",
-    )
+    ).text
 
     for uci, san in (("d7d5", "d5"), ("e7e6", "e6"), ("b8c6", "Nc6"), ("g8f6", "Nf6")):
         assert f"[[move:uci={uci},label={san}]]" in explanation
@@ -221,7 +227,7 @@ def test_llm_coach_annotates_numbered_san_mentions_every_time() -> None:
     explanation = LlmCoachService(provider=FakeLLMProvider(response=response)).explain(
         context,
         level="debutant",
-    )
+    ).text
 
     assert explanation.count("[[move:uci=e7e5,label=e5]]") == 2
     assert explanation.count("[[move:uci=g8f6,label=Nf6]]") == 1
@@ -249,7 +255,7 @@ def test_llm_coach_distinguishes_square_mentions_from_move_mentions() -> None:
     explanation = LlmCoachService(provider=FakeLLMProvider(response=response)).explain(
         context,
         level="debutant",
-    )
+    ).text
 
     assert explanation.count("[[square:sq=e5,label=e5]]") == 3
     assert explanation.count("[[square:sq=d5,label=d5]]") == 2
@@ -336,7 +342,7 @@ def test_llm_coach_accepts_response_without_citation() -> None:
     response = "Explication sans citation."
     service = LlmCoachService(provider=FakeLLMProvider(response=response))
 
-    explanation = service.explain(_context(), level="intermediaire")
+    explanation = service.explain(_context(), level="intermediaire").text
 
     assert explanation == response
 
@@ -358,7 +364,7 @@ def test_llm_coach_sanitizes_references_against_current_position() -> None:
     explanation = LlmCoachService(provider=FakeLLMProvider(response=response)).explain(
         context,
         level="debutant",
-    )
+    ).text
 
     assert "[[move:uci=e7e5,label=e5]]" in explanation
     assert "[[square:sq=e5,label=e5]]" in explanation
@@ -369,44 +375,83 @@ def test_llm_coach_sanitizes_references_against_current_position() -> None:
 def test_llm_coach_falls_back_on_provider_error() -> None:
     service = LlmCoachService(provider=FakeLLMProvider(responses=[LLMProviderError("boom")]))
 
-    with pytest.raises(CoachFallbackError) as exc_info:
-        service.explain(_context(), level="intermediaire")
+    result = service.explain(_context(), level="intermediaire")
 
-    assert exc_info.value.fallback_label == "llm_coach_unavailable"
-    assert "Ruy Lopez" in exc_info.value.text
+    assert result.fallback == "llm_coach_unavailable"
+    assert "Ruy Lopez" in result.text
 
 
 def test_llm_coach_falls_back_with_empty_label() -> None:
     service = LlmCoachService(provider=FakeLLMProvider(responses=[LLMProviderEmptyError("empty")]))
 
-    with pytest.raises(CoachFallbackError) as exc_info:
-        service.explain(_context(), level="intermediaire")
+    result = service.explain(_context(), level="intermediaire")
 
-    assert exc_info.value.fallback_label == "llm_coach_empty"
+    assert result.fallback == "llm_coach_empty"
 
 
 def test_llm_coach_falls_back_with_timeout_label() -> None:
     service = LlmCoachService(provider=FakeLLMProvider(responses=[LLMProviderTimeoutError("timeout")]))
 
-    with pytest.raises(CoachFallbackError) as exc_info:
-        service.explain(_context(), level="intermediaire")
+    result = service.explain(_context(), level="intermediaire")
 
-    assert exc_info.value.fallback_label == "llm_coach_timeout"
+    assert result.fallback == "llm_coach_timeout"
 
 
 def test_llm_coach_falls_back_when_response_too_long() -> None:
     service = LlmCoachService(provider=FakeLLMProvider(response="x" * 2001), max_length=2000)
 
-    with pytest.raises(CoachFallbackError) as exc_info:
-        service.explain(_context(), level="intermediaire")
+    result = service.explain(_context(), level="intermediaire")
 
-    assert exc_info.value.fallback_label == "llm_coach_too_long"
+    assert result.fallback == "llm_coach_too_long"
 
 
 def test_llm_coach_accepts_response_within_streaming_budget() -> None:
     response = "x" * 3400
     service = LlmCoachService(provider=FakeLLMProvider(response=response))
 
-    explanation = service.explain(_context(), level="intermediaire")
+    explanation = service.explain(_context(), level="intermediaire").text
 
     assert explanation == response
+
+
+def test_prepare_coach_output_with_missing_fen_has_no_interactive_markers() -> None:
+    context = replace(
+        _context(),
+        current_position=replace(_context().current_position, fen=None),
+        recommended_moves=[{"san": "e5", "uci": "e7e5"}],
+    )
+
+    result = prepare_coach_output("[[move:uci=e7e5,label=e5]] e5", context)
+
+    assert "[[" not in result.text
+
+
+def test_prepare_coach_output_is_idempotent() -> None:
+    context = replace(
+        _context(),
+        current_position=replace(
+            _context().current_position,
+            fen="rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        ),
+        recommended_moves=[{"san": "e5", "uci": "e7e5"}],
+    )
+
+    once = prepare_coach_output("Le coup e5 est naturel.", context).text
+
+    assert prepare_coach_output(once, context).text == once
+
+
+def test_prepare_coach_output_keeps_a_three_move_line_together() -> None:
+    context = replace(
+        _context(),
+        current_position=replace(
+            _context().current_position,
+            fen="rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        ),
+        recommended_moves=[{"san": "e5", "uci": "e7e5"}],
+    )
+
+    result = prepare_coach_output("Suite e5 puis Nf3 puis Nc6.", context).text
+
+    assert result.count("[[line:") == 1
+    assert "e7e5,g1f3,b8c6" in result

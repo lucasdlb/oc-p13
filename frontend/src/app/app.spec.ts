@@ -263,4 +263,34 @@ describe('App', () => {
     expect(app.analysis()?.coach_status).toBe('failed');
     expect(app.analysis()?.fallbacks_used).toContain('coach_stream_unavailable');
   });
+
+  it('hides provisional coach references until the final SSE result', () => {
+    const service = TestBed.inject(AnalysisService);
+    let streamHandlers: Parameters<AnalysisService['streamCoach']>[1] | undefined;
+    vi.spyOn(service, 'analyzePosition').mockReturnValue(of({
+      ...analysisStub('session-1'),
+      coach_explanation: 'En attente',
+      coach_status: 'pending',
+    }));
+    vi.spyOn(service, 'streamCoach').mockImplementation((_runId, handlers) => {
+      streamHandlers = handlers;
+      return { close: vi.fn() } as unknown as EventSource;
+    });
+
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.onMoveRequested({ from: 'e2', to: 'e4' });
+
+    streamHandlers?.token('Jouez [[move:uci=e7e5,label=e5]] maintenant.');
+
+    expect(app.analysis()?.coach_explanation).toBe('Jouez  maintenant.');
+
+    streamHandlers?.done({
+      explanation: 'Jouez [[move:uci=e7e5,label=e5]] maintenant.',
+      coach_status: 'generated',
+      fallbacks_used: [],
+    });
+
+    expect(app.analysis()?.coach_explanation).toContain('[[move:uci=e7e5,label=e5]]');
+  });
 });

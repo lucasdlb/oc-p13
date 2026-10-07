@@ -363,7 +363,7 @@ export class App {
             return;
           }
           text += chunk;
-          this.mergeAnalysis(generation, cacheKey, { coach_explanation: text });
+          this.mergeAnalysis(generation, cacheKey, { coach_explanation: this.maskStreamingReferences(text) });
         },
         done: (result) => {
           if (generation !== this.analysisGeneration) {
@@ -389,6 +389,12 @@ export class App {
     } catch {
       this.markCoachUnavailable(generation, cacheKey);
     }
+  }
+
+  private maskStreamingReferences(text: string): string {
+    return text
+      .replace(/\[\[[a-z]+:[^\[\]]*\]\]/gi, '')
+      .replace(/\[\[[a-z]+:[^\[\]]*$/gi, '');
   }
 
   private markCoachUnavailable(generation: number, cacheKey: string): void {

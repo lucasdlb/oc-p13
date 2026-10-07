@@ -289,11 +289,20 @@ class OpenAICompatLLMProvider:
             except httpx.HTTPStatusError as exc:
                 if not self._should_retry(exc, attempt):
                     raise
-                time.sleep(self._settings.retry_backoff_seconds)
+                time.sleep(self._retry_delay(exc.response))
         raise AssertionError("retry loop did not return or raise")
 
     def _should_retry(self, error: httpx.HTTPStatusError, attempt: int) -> bool:
         return attempt < self._settings.retries and error.response.status_code in {429, 500, 502, 503, 504}
+
+    def _retry_delay(self, response: httpx.Response) -> float:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(0.0, float(retry_after))
+            except ValueError:
+                pass
+        return self._settings.retry_backoff_seconds
 
     def _body(self, prompt: str, *, system: str | None, stream: bool) -> dict[str, object]:
         messages: list[dict[str, str]] = []

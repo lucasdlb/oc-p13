@@ -2,8 +2,6 @@ import hashlib
 import json
 import threading
 import time
-from dataclasses import replace
-from urllib.parse import quote_plus
 
 import chess
 from pydantic import ValidationError
@@ -21,7 +19,6 @@ from backend.app.models.analysis import (
     RagContext,
     RecommendedMove,
     StockfishRunResponse,
-    Video,
 )
 from backend.app.services.cache_store import (
     CacheStore,
@@ -29,7 +26,7 @@ from backend.app.services.cache_store import (
     masters_cache_key,
     stockfish_cache_key,
 )
-from backend.app.services.coach import CoachFallbackError, CoachService, ConservativeCoachService
+from backend.app.services.coach import CoachService, ConservativeCoachService
 from backend.app.services.lichess import (
     LICHESS_SOURCE,
     LichessExplorerClient,
@@ -44,6 +41,7 @@ from backend.app.services.retrieval_contracts import (
     CoachContext,
     OpeningTreeContext,
     RetrievedContext,
+    StockfishEval,
     build_coach_context,
 )
 from backend.app.services.retrieval_plan_builder import build_retrieval_plan
@@ -319,11 +317,8 @@ def _render_coach(
     coach_service: CoachService | None,
 ) -> tuple[str, str, list[str]]:
     """Render coach text and return (explanation, status, extra_fallbacks)."""
-    try:
-        text = (coach_service or ConservativeCoachService()).explain(coach_context, level=level)
-    except CoachFallbackError as exc:
-        return exc.text, "fallback", [exc.fallback_label]
-    return text, "generated", []
+    result = (coach_service or ConservativeCoachService()).explain(coach_context, level=level)
+    return result.text, "fallback" if result.fallback else "generated", [result.fallback] if result.fallback else []
 
 
 def analyze_stockfish_run(
@@ -459,17 +454,20 @@ def render_run_coach(
 def coach_context_for_run(run: AnalysisRun) -> CoachContext:
     """Build a coach context entirely from persisted run artifacts."""
     context = _coach_context_for_run(run)
-    return replace(
-        context,
-        question=run.question,
-        stockfish=run.stockfish_result,
-        fallbacks=tuple(
-            [
-                *(context.fallbacks or ()),
-                *run.stockfish_fallbacks,
-                *run.rag_fallbacks,
-            ]
-        ),
+    return context.model_copy(
+        update={
+            "question": run.question,
+            "stockfish": StockfishEval.model_validate(run.stockfish_result)
+            if run.stockfish_result
+            else None,
+            "fallbacks": tuple(
+                [
+                    *(context.fallbacks or ()),
+                    *run.stockfish_fallbacks,
+                    *run.rag_fallbacks,
+                ]
+            ),
+        }
     )
 
 

@@ -400,6 +400,6 @@ def _to_retrieved_context(scored: ScoredChunk, bucket: RetrievalBucket) -> Retri
         eco_code=chunk.eco_code,
         opening_name=chunk.opening_name,
         intent=chunk.intent,
-        is_history=chunk.is_history,
+        is_history=chunk.is_history or bucket.include_history,
         is_misc=chunk.is_misc,
     )

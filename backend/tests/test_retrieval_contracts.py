@@ -80,65 +80,6 @@ def test_retrieved_context_artifact_keeps_source_attribution_and_relation() -> N
     }
 
 
-def test_retrieval_plan_can_express_current_only_fallback() -> None:
-    tree_context = OpeningTreeContext(current=RUY, children=(BERLIN,))
-    plan = RetrievalPlan.current_only(tree_context=tree_context, reason="safe_default")
-
-    assert plan.to_artifact() == {
-        "intent": "explain_current_position",
-        "state": "matched",
-        "reason": "safe_default",
-        "requires_stockfish": False,
-        "buckets": [
-            {
-                "name": "current",
-                "relation_to_position": "current",
-                "node_ids": ["ruy-node"],
-                "page_ids": [],
-                "eco_code": "C60",
-                "limit": 4,
-                "include_history": False,
-                "include_misc": False,
-                "entry_move": None,
-                "query_hint": None,
-            }
-        ],
-        "excluded_node_ids": [],
-    }
-
-
-def test_retrieval_plan_can_express_child_allowed_retrieval() -> None:
-    tree_context = OpeningTreeContext(current=RUY, children=(BERLIN,))
-    plan = RetrievalPlan.with_children(tree_context=tree_context, intent="ask_next_moves")
-
-    assert [bucket.to_artifact() for bucket in plan.buckets] == [
-        {
-            "name": "current",
-            "relation_to_position": "current",
-            "node_ids": ["ruy-node"],
-            "page_ids": [],
-            "eco_code": "C60",
-            "limit": 4,
-            "include_history": False,
-            "include_misc": False,
-            "entry_move": None,
-            "query_hint": None,
-        },
-        {
-            "name": "children",
-            "relation_to_position": "child",
-            "node_ids": ["berlin-node"],
-            "page_ids": [],
-            "eco_code": "C65",
-            "limit": 3,
-            "include_history": False,
-            "include_misc": False,
-            "entry_move": "Nf6",
-            "query_hint": "conditional continuations",
-        },
-    ]
-
-
 def test_retrieval_plan_can_express_history_only_retrieval() -> None:
     tree_context = OpeningTreeContext(current=RUY)
     plan = RetrievalPlan.history_only(tree_context=tree_context)
@@ -378,3 +319,72 @@ def test_coach_current_prose_cannot_carry_child_entry_move() -> None:
             entry_move="Nf6",
             source_chunk_id="chunk-ruy",
         )
+
+
+def test_build_coach_context_derives_missing_child_entry_move_from_node() -> None:
+    context = build_coach_context(
+        tree_context=OpeningTreeContext(current=RUY, children=(BERLIN,)),
+        retrieved_contexts=(
+            RetrievedContext(
+                chunk_id="chunk-child-derived",
+                text="Berlin continuation.",
+                source="wikibooks",
+                source_url="https://example.test/berlin",
+                license_or_terms="CC BY-SA 4.0",
+                page_id="berlin",
+                canonical_title="Berlin",
+                section_index=0,
+                part_index=0,
+                section_title="Overview",
+                score=0.8,
+                relation_to_position="child",
+                opening_node_id="berlin-node",
+            ),
+        ),
+    )
+
+    assert context.candidate_continuations[0].entry_move == "Nf6"
+    assert context.candidate_continuations[0].entry_uci == "g8f6"
+
+
+def test_build_coach_context_routes_supporting_and_history_passages() -> None:
+    context = build_coach_context(
+        tree_context=OpeningTreeContext(current=RUY),
+        retrieved_contexts=(
+            RetrievedContext(
+                chunk_id="chunk-parent",
+                text="Parent context.",
+                source="wikibooks",
+                source_url="https://example.test/parent",
+                license_or_terms="CC BY-SA 4.0",
+                page_id="parent",
+                canonical_title="Parent",
+                section_index=0,
+                part_index=0,
+                section_title="Context",
+                score=0.7,
+                relation_to_position="parent",
+            ),
+            RetrievedContext(
+                chunk_id="chunk-history",
+                text="Historical context.",
+                source="wikibooks",
+                source_url="https://example.test/history",
+                license_or_terms="CC BY-SA 4.0",
+                page_id="history",
+                canonical_title="History",
+                section_index=0,
+                part_index=0,
+                section_title="History",
+                score=0.7,
+                relation_to_position="current",
+                is_history=True,
+            ),
+        ),
+    )
+
+    assert [passage.source_chunk_id for passage in context.supporting_prose] == [
+        "chunk-parent",
+        "chunk-history",
+    ]
+    assert context.supporting_prose[1].is_history is True
