@@ -385,6 +385,7 @@ class StockfishEval(ContractModel):
 class CoachContext(ContractModel):
     current_position: CoachPositionContext
     question: str | None = None
+    intent: RetrievalIntent | None = None
     current_prose: tuple[CoachProsePassage, ...] = ()
     supporting_prose: tuple[CoachProsePassage, ...] = ()
     candidate_continuations: tuple[CoachCandidateContinuation, ...] = ()
@@ -420,6 +421,8 @@ class CoachContext(ContractModel):
         }
         if self.supporting_prose:
             artifact["supporting_prose"] = [passage.to_artifact() for passage in self.supporting_prose]
+        if self.intent is not None:
+            artifact["intent"] = self.intent
         return artifact
 
     @classmethod
@@ -431,6 +434,7 @@ def build_coach_context(
     *,
     tree_context: OpeningTreeContext,
     question: str | None = None,
+    intent: RetrievalIntent | None = None,
     retrieved_contexts: tuple[RetrievedContext, ...] = (),
     lichess_stats: dict | None = None,
     recommended_moves: list[dict] | tuple[RecommendedMove, ...] | None = None,
@@ -494,6 +498,7 @@ def build_coach_context(
     return CoachContext(
         current_position=CoachPositionContext.from_tree_context(tree_context),
         question=question,
+        intent=intent,
         current_prose=tuple(current_prose),
         supporting_prose=tuple(supporting_prose),
         candidate_continuations=candidate_continuations,

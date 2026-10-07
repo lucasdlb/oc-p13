@@ -265,11 +265,14 @@ def test_coach_context_artifact_roundtrip_preserves_user_question() -> None:
     context = build_coach_context(
         tree_context=OpeningTreeContext(current=RUY, children=(BERLIN,)),
         question="Pourquoi jouer Nf3 ?",
+        intent="explain_current_position",
     )
 
     restored = CoachContext.from_artifact(context.to_artifact())
 
     assert restored.question == "Pourquoi jouer Nf3 ?"
+    assert restored.intent == "explain_current_position"
+    assert restored.to_artifact()["intent"] == "explain_current_position"
 
 
 def test_coach_context_out_of_theory_makes_stockfish_authoritative() -> None:

@@ -41,6 +41,7 @@ from backend.app.services.retrieval_contracts import (
     CoachContext,
     OpeningTreeContext,
     RetrievedContext,
+    RetrievalIntent,
     StockfishEval,
     build_coach_context,
 )
@@ -376,13 +377,14 @@ def retrieve_rag_for_run(
         else local_match.context
     )
     fallbacks: list[str] = []
+    intent = None
     if opening_tree is None or intent_router is None or rag_service is None:
         rag_context = [_fallback_rag_context(facts.opening, fallback_text)]
         tree_context = _fallback_tree_context(facts.opening)
         retrieved_contexts: tuple[RetrievedContext, ...] = ()
         fallbacks.append("rag_unavailable")
     else:
-        rag_context, fallbacks, tree_context, retrieved_contexts = _retrieve_rag_context(
+        rag_context, fallbacks, tree_context, retrieved_contexts, intent = _retrieve_rag_context(
             request,
             facts.opening,
             fallback_text,
@@ -395,6 +397,7 @@ def retrieve_rag_for_run(
     coach_context = build_coach_context(
         tree_context=tree_context,
         question=request.question,
+        intent=intent,
         retrieved_contexts=retrieved_contexts,
         lichess_stats=lichess_stats,
         recommended_moves=[move.model_dump() for move in facts.recommended_moves],
@@ -782,11 +785,11 @@ def _retrieve_rag_context(
     opening_tree: OpeningTree | None,
     intent_router: IntentRouter | None,
     rag_service: RagService | None,
-) -> tuple[list[RagContext], list[str], OpeningTreeContext, tuple[RetrievedContext, ...]]:
+) -> tuple[list[RagContext], list[str], OpeningTreeContext, tuple[RetrievedContext, ...], RetrievalIntent | None]:
     fallback_context = _fallback_rag_context(opening, fallback_text)
     fallback_tree_context = _fallback_tree_context(opening)
     if opening_tree is None or intent_router is None or rag_service is None:
-        return [fallback_context], [], fallback_tree_context, ()
+        return [fallback_context], [], fallback_tree_context, (), None
 
     try:
         tree_context = opening_tree.context_for_position(moves=tuple(request.moves), fen=request.fen)
@@ -794,7 +797,7 @@ def _retrieve_rag_context(
         plan = build_retrieval_plan(tree_context, decision)
         result = rag_service.retrieve(plan, _rag_query(request, opening, tree_context))
     except Exception:  # noqa: BLE001 - RAG must not break the analysis endpoint
-        return [fallback_context], ["rag_unavailable"], fallback_tree_context, ()
+        return [fallback_context], ["rag_unavailable"], fallback_tree_context, (), None
 
     fallbacks = [
         *_intent_router_fallback_labels(decision.source),
@@ -802,9 +805,9 @@ def _retrieve_rag_context(
     ]
     contexts = [_retrieved_context_to_api(context) for context in result.contexts]
     if not contexts:
-        return [fallback_context], fallbacks, tree_context, ()
+        return [fallback_context], fallbacks, tree_context, (), plan.intent
 
-    return contexts, fallbacks, tree_context, result.contexts
+    return contexts, fallbacks, tree_context, result.contexts, plan.intent
 
 
 def _fallback_tree_context(opening: Opening) -> OpeningTreeContext:
