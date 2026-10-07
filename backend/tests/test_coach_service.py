@@ -156,7 +156,7 @@ def test_llm_coach_preserves_display_formatting() -> None:
 
     explanation = service.explain(_context(), level="debutant").text
 
-    assert explanation == response
+    assert explanation == "## Plan simple\n\n**e5** controle le centre.\n\n- Developper une piece\n\n- Roquer rapidement"
 
 
 def test_llm_coach_adds_interactive_references_when_model_omits_dsl() -> None:
@@ -292,7 +292,7 @@ def test_llm_coach_prompt_includes_recommended_moves_and_structure() -> None:
     assert "Plan simple" in system
     assert "Idee principale" in system
     assert "Coups a regarder" in system
-    assert "Ce que disent les stats" in system
+    assert "Conclusion :" in system
     assert "strictement en francais" in system
     assert "Consignes finales obligatoires" in prompt
     assert "[[move:uci=e7e5,label=e5]]" in prompt

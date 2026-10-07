@@ -1,7 +1,8 @@
 import chess
 import pytest
 
-from backend.app.services.coach_prompt import allowed_move_records, build_prompt
+from backend.app.services.coach_prompt import allowed_move_records, build_prompt, system_prompt
+from backend.app.services.coach_references import find_illegal_san_citations
 from backend.app.services.retrieval_contracts import (
     CoachContext,
     CoachPositionContext,
@@ -19,6 +20,7 @@ def _context(
     *,
     recommended_moves: list[dict] | None = None,
     passages: tuple[CoachProsePassage, ...] = (),
+    intent: str | None = None,
 ) -> CoachContext:
     sources = tuple(
         CoachSourceAttribution(
@@ -43,6 +45,7 @@ def _context(
             fen=fen,
         ),
         question="Quel est le plan ?",
+        intent=intent,
         current_prose=passages,
         source_attributions=sources,
         recommended_moves=tuple(recommended_moves or ()),
@@ -122,3 +125,29 @@ def test_worst_case_prompt_stays_under_ollama_context_budget() -> None:
 
     budget_chars = (16384 - 1000) * 3
     assert len(prompt) < budget_chars
+
+
+def test_question_intent_uses_direct_criterion_structure_and_top_three_moves() -> None:
+    context = _context(
+        intent="compare_moves",
+        recommended_moves=[
+            {"san": "e4", "uci": "e2e4", "move_share": 0.2},
+            {"san": "d4", "uci": "d2d4", "move_share": 0.8},
+            {"san": "Nf3", "uci": "g1f3", "move_share": 0.5},
+            {"san": "c4", "uci": "c2c4", "move_share": 0.1},
+        ],
+    )
+
+    prompt = build_prompt(context, "intermediaire")
+
+    assert "Reponse directe : (nommez le critere demande)" in system_prompt(context.intent)
+    assert "- d4 (d2d4)" in prompt
+    assert "- Nf3 (g1f3)" in prompt
+    assert "- e4 (e2e4)" in prompt
+    assert "- c4 (c2c4)" not in prompt
+
+
+def test_prose_detector_reports_illegal_san_without_rewriting() -> None:
+    findings = find_illegal_san_citations("Le plan preparant Bg4 est actif.", AFTER_E4_FEN)
+
+    assert findings == ("Bg4",)

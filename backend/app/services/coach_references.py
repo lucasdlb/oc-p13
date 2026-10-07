@@ -116,6 +116,22 @@ def annotate_references(text: str, index: MoveIndex) -> str:
     return enriched
 
 
+def find_illegal_san_citations(text: str, fen: str | None) -> tuple[str, ...]:
+    """Report SAN-like citations that fail parsing, without changing the prose."""
+    board = board_from_fen(fen)
+    if board is None:
+        return ()
+    masked = _mask_coach_markers(text)
+    findings: list[str] = []
+    for match in _SAN_TOKEN_PATTERN.finditer(masked):
+        prefix = masked[:match.start()].lower()
+        if not re.search(r"(?:joue|jouer|coup|apres|après|preparant|préparant|suivi de|si)\s*$", prefix):
+            continue
+        if _parse_move_token(board, match.group(0)) is None and match.group(0) not in findings:
+            findings.append(match.group(0))
+    return tuple(findings)
+
+
 def parse_coach_reference(kind: str, body: str) -> CoachReference | None:
     normalized_kind = kind.lower()
     if normalized_kind == "move":

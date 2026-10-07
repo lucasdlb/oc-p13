@@ -53,6 +53,11 @@ tactique Stockfish. Le systeme doit rendre cette composition explicite.
    `ConservativeCoachService` et ajoute un label diagnostique (`coach_claim_verification_failed`).
    Il ne patche pas silencieusement une phrase deja produite.
 
+   En attendant `EvidencePack` et `ClaimVerifier`, les regles anti-invention du prompt et le
+   detecteur de prose en mode journal constituent un arret d'urgence mesure : ils interdisent les
+   affirmations tactiques non sourcees dans le prompt et signalent les coups SAN suspects sans
+   modifier la reponse. Ils ne remplacent pas la verification deterministe.
+
 5. **Le chemin imperatif reste la reference.** `EvidencePack` et `ClaimVerifier` sont des services
    testables sans Ollama, LangGraph, Milvus ou Stockfish reels. Le graphe LangGraph orchestre leurs
    appels mais ne contient pas leur logique metier.

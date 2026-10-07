@@ -3,11 +3,17 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
 import logging
+import re
 from typing import Protocol, runtime_checkable
 
 from backend.app.services.coach_fallback import fallback_explanation, fallback_label
 from backend.app.services.coach_prompt import build_prompt, system_prompt
-from backend.app.services.coach_references import MoveIndex, annotate_references, sanitize_coach_references
+from backend.app.services.coach_references import (
+    MoveIndex,
+    annotate_references,
+    find_illegal_san_citations,
+    sanitize_coach_references,
+)
 from backend.app.services.coach_validation import validate_coach_output
 from backend.app.services.llm import LLMProvider, LLMProviderError
 from backend.app.services.retrieval_contracts import CoachContext, CoachProsePassage, CoachSourceAttribution
@@ -78,7 +84,7 @@ class LlmCoachService:
         if not _all_passages_sourced(context, sources):
             return self._fallback_result(context, level, "llm_coach_source_metadata")
         try:
-            text = self._provider.generate(build_prompt(context, level), system=system_prompt())
+            text = self._provider.generate(build_prompt(context, level), system=system_prompt(context.intent))
         except LLMProviderError as exc:
             label = fallback_label(exc)
             logger.warning("LLM coach fallback %s: %s", label, exc)
@@ -96,7 +102,7 @@ class LlmCoachService:
             raise CoachFallbackError(result.text, "llm_coach_source_metadata")
         chunks: list[str] = []
         try:
-            for chunk in self._provider.generate_stream(build_prompt(context, level), system=system_prompt()):
+            for chunk in self._provider.generate_stream(build_prompt(context, level), system=system_prompt(context.intent)):
                 chunks.append(chunk)
                 yield chunk
         except LLMProviderError as exc:
@@ -116,16 +122,24 @@ class LlmCoachService:
 
 
 def prepare_coach_output(text: str, context: CoachContext) -> CoachResult:
+    illegal_citations = find_illegal_san_citations(text, context.current_position.fen)
+    if illegal_citations:
+        logger.warning("coach prose contains potentially illegal SAN citations: %s", illegal_citations)
     index = MoveIndex.from_context(context)
     allowed_moves = {record.uci for record in index.records}
     sanitized = sanitize_coach_references(text, fen=context.current_position.fen, allowed_moves=allowed_moves)
     if index.board is None:
-        return CoachResult(sanitized)
+        return CoachResult(_ensure_markdown_list_spacing(sanitized))
     enriched = annotate_references(sanitized, index)
+    enriched = _ensure_markdown_list_spacing(enriched)
     if "[[" in enriched:
         return CoachResult(enriched)
     fallback = _interactive_reference_fallback(index)
     return CoachResult(f"{enriched}\n\n{fallback}" if fallback else enriched)
+
+
+def _ensure_markdown_list_spacing(text: str) -> str:
+    return re.sub(r"(?m)((?:^\s*[-*] .+\n)+)(?=\S)", r"\1\n", text)
 
 
 def sanitize_coach_output(text: str, context: CoachContext) -> str:
