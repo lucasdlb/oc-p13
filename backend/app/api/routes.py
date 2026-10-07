@@ -1,4 +1,3 @@
-from functools import lru_cache
 import logging
 from collections.abc import AsyncIterator
 from typing import Annotated
@@ -36,9 +35,9 @@ from backend.app.services.analysis import (
 from backend.app.services.coach_stream import stream_coach
 from backend.app.services.cache_store import CacheStore, get_cache_store as _legacy_get_cache_store
 from backend.app.services.coach import CoachService
-from backend.app.services.intent_router import IntentRouter, JevIntentClassifier
+from backend.app.services.intent_router import IntentRouter
 from backend.app.services.lichess import LichessExplorerClient
-from backend.app.services.opening_tree import DEFAULT_OUTPUT_DIR, OpeningTree, OpeningTreeError
+from backend.app.services.opening_tree import OpeningTree
 from backend.app.services.rag import RagService
 from backend.app.services.session_store import SessionStore, get_session_store as _legacy_get_session_store, now_iso
 from backend.app.services.stockfish import StockfishService
