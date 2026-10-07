@@ -54,6 +54,8 @@ import json
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from experiments.rag.eval_v2.eval_dataset import load_dataset
 from typing import Any
 
 from experiments.rag.scoring import evaluate_query, percentile
@@ -507,7 +509,7 @@ def main() -> int:
     parser.add_argument("--out", type=Path, required=True, help="Where to write report.json.")
     args = parser.parse_args()
 
-    dataset = json.loads(args.dataset.read_text(encoding="utf-8"))
+    dataset = load_dataset(args.dataset)
     retrieved = _load_run(args.run)
 
     tree = None

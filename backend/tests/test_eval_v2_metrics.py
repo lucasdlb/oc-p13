@@ -9,9 +9,10 @@ import pytest
 
 from backend.app.services.opening_tree import OpeningTree, build_opening_tree_snapshot
 from experiments.rag.eval_v2 import metrics
+from experiments.rag.eval_v2.eval_dataset import load_dataset
 
 DATASET_PATH = (
-    Path(__file__).resolve().parents[2] / "experiments" / "rag" / "eval_v2" / "dataset.json"
+    Path(__file__).resolve().parents[2] / "experiments" / "rag" / "eval_v2" / "retrieval.json"
 )
 
 RUY_LOPEZ_UCI = ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"]
@@ -25,7 +26,7 @@ PAGE = "wikibooks-chess-opening-theory::Chess Opening Theory/1. e4/1...e5/2. Nf3
 
 @pytest.fixture(scope="module")
 def dataset() -> dict:
-    return json.loads(DATASET_PATH.read_text(encoding="utf-8"))
+    return load_dataset(DATASET_PATH)
 
 
 @pytest.fixture(scope="module")

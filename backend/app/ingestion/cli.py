@@ -23,7 +23,7 @@ from backend.app.services.opening_tree import OpeningTree
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CORPUS_DIR = REPO_ROOT / ".scratch" / "rag" / "corpus"
 DEFAULT_OPENING_TREE_DIR = DEFAULT_CORPUS_DIR / "opening-tree"
-DEFAULT_EVAL_DATASET = REPO_ROOT / "experiments" / "rag" / "eval_v2" / "dataset.json"
+DEFAULT_EVAL_DATASET = REPO_ROOT / "experiments" / "rag" / "eval_v2" / "retrieval.json"
 
 
 def main() -> int:

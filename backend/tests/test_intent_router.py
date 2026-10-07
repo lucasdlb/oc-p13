@@ -16,7 +16,9 @@ from backend.app.services.intent_router import (
     IntentRouterError,
     JevIntentClassifier,
     RuleBasedIntentClassifier,
+    _systemone_decision,
 )
+from experiments.rag.eval_v2.eval_dataset import load_dataset
 
 
 BERLIN = CandidateMove(
@@ -43,19 +45,20 @@ QUEENS_GAMBIT_ACCEPTED = CandidateMove(
     opening_node_id="qga-node",
 )
 
-DATASET_PATH = Path(__file__).resolve().parents[2] / "experiments" / "rag" / "eval_v2" / "dataset.json"
+DATASET_PATH = Path(__file__).resolve().parents[2] / "experiments" / "rag" / "eval_v2" / "retrieval.json"
 
 
 def _context(
     question: str | None,
     *,
     candidates: tuple[CandidateMove, ...] = (BERLIN,),
+    fen: str | None = "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
 ) -> IntentRouterContext:
     return IntentRouterContext(
         question=question,
         level="debutant",
         moves=("e2e4", "e7e5", "g1f3", "b8c6", "f1b5"),
-        fen="r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+        fen=fen,
         current_opening_name="Ruy Lopez",
         current_eco="C60",
         current_node_id="ruy-node",
@@ -118,8 +121,74 @@ def test_rule_based_classifier_avoids_substring_false_positives(question: str) -
     assert decision.intent not in {"ask_specific_candidate", "evaluate_move_quality"}
 
 
+def test_multiple_named_candidates_are_compared() -> None:
+    e5 = CandidateMove(san="e5", uci="e4e5", opening_node_id="e5-node")
+    f4 = CandidateMove(san="f4", uci="f2f4", opening_node_id="f4-node")
+    decision = RuleBasedIntentClassifier().classify(
+        _context(
+            "Quel est le plus agressif entre e5 et f4 ?",
+            candidates=(e5, f4),
+            fen="rnbqkbnr/pppp1ppp/4p3/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+        )
+    )
+
+    assert decision.intent == "compare_moves"
+    assert decision.reason_codes == ("comparison_phrase",)
+
+
+@pytest.mark.parametrize(
+    ("question", "intent"),
+    [
+        ("Quel piège après d5 ?", "ask_trap"),
+        ("La suite de l'histoire de cette ouverture ?", "ask_history"),
+        ("Quels sont les pièges à éviter ?", "ask_mistake"),
+    ],
+)
+def test_specific_move_mentions_do_not_override_higher_priority_rules(question: str, intent: str) -> None:
+    decision = RuleBasedIntentClassifier().classify(_context(question))
+
+    assert decision.intent == intent
+
+
+def test_generic_superlative_about_a_move_is_comparison() -> None:
+    decision = RuleBasedIntentClassifier().classify(_context("Quel est le coup le plus naturel ?"))
+
+    assert decision.intent == "compare_moves"
+
+
+def test_best_book_is_not_move_comparison() -> None:
+    decision = RuleBasedIntentClassifier().classify(_context("Quel est le meilleur livre sur la Française ?"))
+
+    assert decision.intent != "compare_moves"
+
+
+def test_question_with_legal_square_but_no_move_does_not_become_specific_candidate() -> None:
+    decision = RuleBasedIntentClassifier().classify(
+        _context("Pourquoi le pion e5 est important si les noirs jouent d5 ?", fen=None)
+    )
+
+    assert decision.intent != "ask_specific_candidate"
+
+
+def test_ambiguous_english_or_french_rook_king_notation_is_not_silently_selected() -> None:
+    decision = RuleBasedIntentClassifier().classify(
+        _context(
+            "Rg1 est-il correct ?",
+            candidates=(
+                CandidateMove(san="Rg1", uci="h1g1", opening_node_id="rook-node"),
+                CandidateMove(san="Kg1", uci="f2g1", opening_node_id="king-node"),
+            ),
+            fen="8/8/8/8/8/5K2/8/7R w - - 0 1",
+        )
+    )
+
+    assert decision.intent == "evaluate_move_quality"
+    assert decision.matched_candidate_move is None
+    assert "matched_candidate_move" not in decision.reason_codes
+
+
 def test_rule_based_classifier_agrees_with_frozen_eval_v2_questions() -> None:
-    dataset = json.loads(DATASET_PATH.read_text(encoding="utf-8"))
+    dataset = load_dataset(DATASET_PATH)
     classifier = RuleBasedIntentClassifier()
 
     decisions = {
@@ -280,7 +349,7 @@ def test_jev_classifier_validates_provider_success_without_logging_secret(caplog
     )
 
     with caplog.at_level(logging.INFO, logger="backend.intent_router"):
-        decision = classifier.classify(_context("Que jouer ?"))
+        decision = IntentRouter(primary=classifier).classify(_context("Que jouer ?"))
 
     assert decision.intent == "ask_next_moves"
     assert decision.confidence == 0.86
@@ -309,6 +378,23 @@ def test_jev_classifier_validates_provider_success_without_logging_secret(caplog
         for record in caplog.records
     )
     assert "ts-key" not in caplog.text
+
+
+def test_jev_rejects_legacy_state_intents() -> None:
+    with pytest.raises(ValueError, match="unknown TypeSafe retrieval intent"):
+        _systemone_decision(
+            {
+                "answers": {
+                    "intent": {
+                        "type": "choice",
+                        "choice": "ask_unsupported",
+                        "confidence": 0.9,
+                        "probabilities": {"ask_unsupported": 1.0},
+                    }
+                }
+            },
+            default_model="jev-1.13.0",
+        )
 
 
 def test_jev_classifier_routes_to_fallback_on_timeout() -> None:

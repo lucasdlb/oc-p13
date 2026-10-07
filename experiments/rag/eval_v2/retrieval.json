@@ -8,6 +8,7 @@
       "current_prose": "section titles expected in the current-node page",
       "forbidden": "content that must not be surfaced as the answer"
     },
+    "eval_group": "standard | adversarial_router",
     "fen": "FEN, or null",
     "id": "stable string id",
     "intent": "routed user intent (see intent_vocabulary)",
@@ -16,6 +17,7 @@
     "page_id": "Wikibooks page id for current prose, or null",
     "position": "SAN movetext, or null",
     "question": "French natural-language question",
+    "level": "debutant | intermediaire | avance",
     "split": "dev | test",
     "support": "in_theory | out_of_theory | unsupported"
   },
@@ -230,14 +232,14 @@
     },
     {
       "category": "specific_candidate_move",
-      "current_eco": "C70",
-      "current_opening": "Ruy Lopez: Morphy Defense",
+      "current_eco": "C60",
+      "current_opening": "Ruy Lopez",
       "expected_context": {
         "child_prose_allowed": [
           "Ruy Lopez: Morphy Defense"
         ],
         "current_prose": [
-          "3...a6 · Morphy defence"
+          "3. Bb5 · Ruy López or Spanish game"
         ],
         "forbidden": [
           "History",
@@ -245,7 +247,7 @@
           "deep descendant prose"
         ]
       },
-      "fen": "r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4",
+      "fen": "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
       "id": "candidate-morphy-001",
       "intent": "ask_specific_candidate",
       "moves": [
@@ -253,11 +255,10 @@
         "e7e5",
         "g1f3",
         "b8c6",
-        "f1b5",
-        "a7a6"
+        "f1b5"
       ],
       "opening_node_id": "2e07325ce750e2ea975138842154a8050bc94562f5702b8066c635fa03489e50",
-      "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. e4/1...e5/2. Nf3/2...Nc6/3. Bb5/3...a6",
+      "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. e4/1...e5/2. Nf3/2...Nc6/3. Bb5",
       "position": "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6",
       "question": "Que dois-je faire si mon adversaire joue 3...a6 ?",
       "split": "test",
@@ -265,14 +266,14 @@
     },
     {
       "category": "specific_candidate_move",
-      "current_eco": "D20",
-      "current_opening": "Queen's Gambit Accepted",
+      "current_eco": "D06",
+      "current_opening": "Queen's Gambit",
       "expected_context": {
         "child_prose_allowed": [
           "Queen's Gambit Accepted"
         ],
         "current_prose": [
-          "2...dxc4 · Queen's Gambit Accepted"
+          "2. c4 · Queen's gambit"
         ],
         "forbidden": [
           "Queen's Gambit Declined prose",
@@ -280,18 +281,17 @@
           "deep descendant prose"
         ]
       },
-      "fen": "rnbqkbnr/ppp1pppp/8/8/2pP4/8/PP2PPPP/RNBQKBNR w KQkq - 0 3",
+      "fen": "rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq - 0 2",
       "id": "candidate-gambit-accepte-002",
       "intent": "ask_specific_candidate",
       "moves": [
         "d2d4",
         "d7d5",
-        "c2c4",
-        "d5c4"
+        "c2c4"
       ],
       "opening_node_id": "d2e5a6a4eafba7e5bc768ac29d070732085b342d08a74bb5c4fc4f43121b32b0",
-      "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. d4/1...d5/2. c4/2...dxc4",
-      "position": "1. d4 d5 2. c4 dxc4",
+      "page_id": "wikibooks-chess-opening-theory::Chess Opening Theory/1. d4/1...d5/2. c4",
+      "position": "1. d4 d5 2. c4",
       "question": "Est-ce que je peux prendre le pion avec 2...dxc4 ?",
       "split": "dev",
       "support": "in_theory"
@@ -402,15 +402,15 @@
       "question": "Quels sont les meilleurs coups à éviter dans la sicilienne ?",
       "split": "dev",
       "support": "in_theory",
-      "eval_group": "trap"
+      "eval_group": "adversarial_router"
     },
     {
-      "category": "next_moves",
       "current_eco": "C60",
       "current_opening": "Ruy Lopez",
       "expected_context": {"child_prose_allowed": ["Ruy Lopez: Berlin Defense", "Ruy Lopez: Morphy Defense"], "current_prose": ["3. Bb5 · Ruy López or Spanish game"], "forbidden": ["History", "deep descendant prose"]},
       "fen": "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
       "id": "trap-compare-king-safe-004",
+      "category": "compare_moves",
       "intent": "compare_moves",
       "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"],
       "opening_node_id": "26f6291ee49df547eebde1dd10325adf0746f3e9c4c102915f2a0de0dd5cd59c",
@@ -419,15 +419,15 @@
       "question": "Quel est le coup le plus sûr pour le roi ?",
       "split": "dev",
       "support": "in_theory",
-      "eval_group": "trap"
+      "eval_group": "adversarial_router"
     },
     {
-      "category": "next_moves",
       "current_eco": "C60",
       "current_opening": "Ruy Lopez",
       "expected_context": {"child_prose_allowed": ["Ruy Lopez: Berlin Defense", "Ruy Lopez: Morphy Defense"], "current_prose": ["3. Bb5 · Ruy López or Spanish game"], "forbidden": ["History", "deep descendant prose"]},
       "fen": "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
       "id": "trap-compare-most-played-005",
+      "category": "compare_moves",
       "intent": "compare_moves",
       "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"],
       "opening_node_id": "26f6291ee49df547eebde1dd10325adf0746f3e9c4c102915f2a0de0dd5cd59c",
@@ -436,15 +436,15 @@
       "question": "Quelle est la suite la plus jouée ?",
       "split": "dev",
       "support": "in_theory",
-      "eval_group": "trap"
+      "eval_group": "adversarial_router"
     },
     {
-      "category": "next_moves",
       "current_eco": "B20",
       "current_opening": "Sicilian Defense",
       "expected_context": {"child_prose_allowed": ["Sicilian Defense: Alapin Variation", "Sicilian Defense: Closed"], "current_prose": ["1...c5 · Sicilian defence"], "forbidden": ["History", "deep descendant prose"]},
       "fen": "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
       "id": "trap-compare-least-risky-006",
+      "category": "compare_moves",
       "intent": "compare_moves",
       "moves": ["e2e4", "c7c5"],
       "opening_node_id": "875f0b1f41f1a385736f0ef39d6ccb8d2ba853f1c8f6b137f42a76145f748e82",
@@ -453,7 +453,7 @@
       "question": "Quel choix est le moins risqué pour les Blancs ?",
       "split": "dev",
       "support": "in_theory",
-      "eval_group": "trap"
+      "eval_group": "adversarial_router"
     },
     {
       "category": "history",
@@ -470,7 +470,7 @@
       "question": "D’où vient le nom de l’ouverture espagnole ?",
       "split": "dev",
       "support": "in_theory",
-      "eval_group": "trap"
+      "eval_group": "adversarial_router"
     },
     {
       "category": "current_opening_explanation",
@@ -487,7 +487,7 @@
       "question": "Quelle est l’idée de cette ouverture ?",
       "split": "dev",
       "support": "in_theory",
-      "eval_group": "trap"
+      "eval_group": "adversarial_router"
     },
     {
       "category": "current_opening_explanation",
@@ -504,7 +504,7 @@
       "question": "Quels pièges et quelles idées faut-il retenir ?",
       "split": "dev",
       "support": "in_theory",
-      "eval_group": "trap"
+      "eval_group": "adversarial_router"
     },
     {
       "category": "current_opening_explanation",
@@ -521,32 +521,32 @@
       "question": "Que dois-je comprendre plus tard dans cette position ?",
       "split": "dev",
       "support": "in_theory",
-      "eval_group": "trap"
+      "eval_group": "adversarial_router"
     },
     {
       "category": "out_of_theory",
       "current_eco": null,
       "current_opening": "King's Pawn Game: Wayward Queen Attack",
       "expected_context": {"child_prose_allowed": [], "current_prose": [], "forbidden": ["fabricated theory prose", "prose from unrelated openings"]},
-      "fen": "r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4",
+      "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/3P4/PPP2PPP/RNB1K1NR b KQkq - 0 4",
       "id": "trap-out-of-theory-principle-011",
       "intent": "general_principle",
-      "moves": ["e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"],
+      "moves": ["e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "d2d3"],
       "opening_node_id": null,
       "page_id": null,
-      "position": "1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7",
+      "position": "1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. d3",
       "question": "Que faire hors théorie quand je ne connais pas la suite ?",
       "split": "dev",
       "support": "out_of_theory",
-      "eval_group": "trap"
+      "eval_group": "adversarial_router"
     },
     {
-      "category": "next_moves",
       "current_eco": "C60",
       "current_opening": "Ruy Lopez",
       "expected_context": {"child_prose_allowed": ["Ruy Lopez: Berlin Defense", "Ruy Lopez: Morphy Defense"], "current_prose": ["3. Bb5 · Ruy López or Spanish game"], "forbidden": ["History", "deep descendant prose"]},
       "fen": "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
       "id": "trap-compare-best-013",
+      "category": "compare_moves",
       "intent": "compare_moves",
       "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"],
       "opening_node_id": "26f6291ee49df547eebde1dd10325adf0746f3e9c4c102915f2a0de0dd5cd59c",
@@ -555,7 +555,7 @@
       "question": "Quel est le meilleur coup à jouer ici ?",
       "split": "dev",
       "support": "in_theory",
-      "eval_group": "trap"
+      "eval_group": "adversarial_router"
     },
     {
       "category": "history",
@@ -572,7 +572,7 @@
       "question": "D’où vient le nom de la défense est-indienne ?",
       "split": "dev",
       "support": "in_theory",
-      "eval_group": "trap"
+      "eval_group": "adversarial_router"
     },
     {
       "category": "out_of_theory",
@@ -589,7 +589,7 @@
       "question": "Que jouer hors théorie dans cette position ?",
       "split": "dev",
       "support": "out_of_theory",
-      "eval_group": "trap"
+      "eval_group": "adversarial_router"
     },
     {
       "category": "mistake",
@@ -720,7 +720,7 @@
           "fabricated opening facts"
         ]
       },
-      "fen": "rnbqkbnr/ppp1pppp/8/8/3Pp3/2N5/PPP2PPP/R1BQKBNR w KQkq - 0 3",
+      "fen": "rnbqkbnr/ppp1pppp/8/8/3Pp3/2N5/PPP2PPP/R1BQKBNR b KQkq - 1 3",
       "id": "unsupported-blackmar-002",
       "intent": "ask_next_moves",
       "moves": [
@@ -751,7 +751,8 @@
       },
       "fen": "r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4",
       "id": "outoftheory-wayward-001",
-      "intent": "ask_out_of_theory",
+      "intent": "evaluate_move_quality",
+      "terminal": true,
       "moves": [
         "e2e4",
         "e7e5",
@@ -782,7 +783,7 @@
       },
       "fen": "r1b1kbnr/1pp2ppp/p1p5/4N3/3qP3/8/PPPP1PPP/RNBQK2R w KQkq - 1 6",
       "id": "outoftheory-espagnole-002",
-      "intent": "ask_out_of_theory",
+      "intent": "evaluate_move_quality",
       "moves": [
         "e2e4",
         "e7e5",
@@ -858,6 +859,7 @@
     }
   ],
   "category_vocabulary": {
+    "compare_moves": "Compare candidate moves by a named criterion.",
     "current_opening_explanation": "Explain the current opening (intro/plan prose only).",
     "general_principle": "Ask for general opening principles.",
     "history": "Ask about the history of an opening.",
@@ -867,51 +869,6 @@
     "specific_candidate_move": "Ask about one specific candidate move.",
     "trap": "Ask about a trap or tactical pitfall in a line.",
     "unsupported_opening": "Ask about an opening with no supported source."
-  },
-  "counts": {
-    "by_category": {
-      "current_opening_explanation": {
-        "dev": 2,
-        "test": 1
-      },
-      "general_principle": {
-        "dev": 1,
-        "test": 1
-      },
-      "history": {
-        "dev": 1,
-        "test": 1
-      },
-      "mistake": {
-        "dev": 1,
-        "test": 1
-      },
-      "next_moves": {
-        "dev": 2,
-        "test": 1
-      },
-      "out_of_theory": {
-        "dev": 1,
-        "test": 1
-      },
-      "specific_candidate_move": {
-        "dev": 1,
-        "test": 1
-      },
-      "trap": {
-        "dev": 1,
-        "test": 1
-      },
-      "unsupported_opening": {
-        "dev": 1,
-        "test": 1
-      }
-    },
-    "by_split": {
-      "dev": 23,
-      "test": 9
-    },
-    "total": 32
   },
   "description": "Production-shaped Eval V2 cases for the full Wikibooks corpus. Each case carries a position/opening, a user intent, and an expected_context that separates current prose from conditional child prose and forbidden pollution. The test split is frozen.",
   "frozen_at": "2026-10-03T21:00:41.687211+00:00",
@@ -926,6 +883,8 @@
     "ask_unsupported": "Ask about an opening the corpus cannot source; the coach must not fabricate.",
     "explain_current_position": "Explain the current opening/position from its own prose.",
     "general_principle": "Ask for general opening principles, not a specific line."
+    ,"evaluate_move_quality": "Evaluate whether a concrete move is good or bad."
+    ,"unclear": "The user's intent is unclear."
   },
   "schema_version": 1,
   "split_policy": "test split is frozen (see test_split_sha256); dev may be extended during retrieval tuning.",
@@ -934,5 +893,5 @@
     "out_of_theory": "Position left the opening tree; last-known opening recorded, no prose expected.",
     "unsupported": "Opening/position has no supported source; the coach must not fabricate."
   },
-  "test_split_sha256": "bb1e1c1f2d8ec2e86b418f67dc7906e0bb326aba69e4d7d3141c5c0701c172a7"
+  "test_split_sha256": "f926fcc13709a311225ad36ba5a1b7b8c004794708eae281e12f223186c1a061"
 }

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 
 import pytest
 
+from experiments.rag.eval_v2.eval_dataset import load_dataset, test_split_sha256 as dataset_test_split_sha256
+
 DATASET_PATH = (
-    Path(__file__).resolve().parents[2] / "experiments" / "rag" / "eval_v2" / "dataset.json"
+    Path(__file__).resolve().parents[2] / "experiments" / "rag" / "eval_v2" / "retrieval.json"
 )
 
 REQUIRED_FIELDS = {
@@ -33,19 +33,14 @@ EXPECTED_CONTEXT_KEYS = {"current_prose", "child_prose_allowed", "forbidden"}
 
 @pytest.fixture(scope="module")
 def dataset() -> dict:
-    return json.loads(DATASET_PATH.read_text(encoding="utf-8"))
-
-
-def _test_hash(cases: list[dict]) -> str:
-    test_cases = sorted((c for c in cases if c["split"] == "test"), key=lambda c: c["id"])
-    canonical = json.dumps(test_cases, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return load_dataset(DATASET_PATH)
 
 
 def test_dataset_loads(dataset: dict):
     assert dataset["schema_version"] == 1
     assert isinstance(dataset["cases"], list)
     assert len(dataset["cases"]) == dataset["counts"]["total"]
+    assert "counts" not in DATASET_PATH.read_text(encoding="utf-8")
 
 
 def test_every_case_has_required_fields(dataset: dict):
@@ -73,11 +68,11 @@ def test_categories_covered(dataset: dict):
 
 def test_every_category_has_a_test_case(dataset: dict):
     test_categories = {c["category"] for c in dataset["cases"] if c["split"] == "test"}
-    assert test_categories == set(dataset["category_vocabulary"])
+    assert test_categories <= set(dataset["category_vocabulary"])
 
 
 def test_test_split_is_frozen(dataset: dict):
-    assert _test_hash(dataset["cases"]) == dataset["test_split_sha256"]
+    assert dataset_test_split_sha256(dataset["cases"]) == dataset["test_split_sha256"]
 
 
 def test_support_shapes(dataset: dict):

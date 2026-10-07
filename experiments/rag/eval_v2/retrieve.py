@@ -35,13 +35,14 @@ from backend.app.services.retrieval_contracts import (
 )
 from backend.app.services.retrieval_plan_builder import build_retrieval_plan
 from experiments.rag.eval_v2.metrics import score_run
+from experiments.rag.eval_v2.eval_dataset import load_dataset
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CORPUS_DIR = REPO_ROOT / ".scratch" / "rag" / "corpus"
 DEFAULT_SNAPSHOT_DIR = DEFAULT_CORPUS_DIR / "wikibooks-snapshot"
 DEFAULT_OPENING_TREE_DIR = DEFAULT_CORPUS_DIR / "opening-tree"
-DEFAULT_DATASET = Path(__file__).with_name("dataset.json")
+DEFAULT_DATASET = Path(__file__).with_name("retrieval.json")
 DEFAULT_RUNS_DIR = Path(__file__).with_name("runs")
 
 
@@ -56,7 +57,7 @@ def main() -> int:
             opening_tree_dir=args.opening_tree_dir,
             eval_dataset_path=args.dataset,
         )
-        dataset = json.loads(args.dataset.read_text(encoding="utf-8"))
+        dataset = load_dataset(args.dataset)
         tree = OpeningTree.from_snapshot_dir(args.opening_tree_dir)
         digest = provider.model_digest()
         if not digest:

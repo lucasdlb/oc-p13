@@ -22,7 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = REPO_ROOT / ".scratch" / "rag" / "corpus" / "wikibooks-full" / "manifest.json"
 DEFAULT_CLEAN_DIR = REPO_ROOT / ".scratch" / "rag" / "corpus" / "wikibooks-clean"
 DEFAULT_OPENING_TREE_DIR = REPO_ROOT / ".scratch" / "rag" / "corpus" / "opening-tree"
-DEFAULT_EVAL_DATASET = REPO_ROOT / "experiments" / "rag" / "eval_v2" / "dataset.json"
+DEFAULT_EVAL_DATASET = REPO_ROOT / "experiments" / "rag" / "eval_v2" / "retrieval.json"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / ".scratch" / "rag" / "corpus" / "wikibooks-snapshot"
 
 

@@ -26,7 +26,7 @@ import chess
 import httpx
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE_DATASET = ROOT / "experiments/rag/eval_v2/dataset.json"
+BASE_DATASET = ROOT / "experiments/rag/eval_v2/retrieval.json"
 CASES_FILE = ROOT / "experiments/rag/eval_v2/coach_eval_cases.json"
 TACTICAL_TERMS = (
     "attaque",

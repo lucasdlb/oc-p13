@@ -38,6 +38,7 @@ from backend.app.services.llm import OllamaLLMProvider
 from backend.app.services.milvus import MilvusStore, MilvusStoreError
 from backend.app.services.opening_tree import OpeningTree
 from experiments.rag.eval_v2.metrics import score_run
+from experiments.rag.eval_v2.eval_dataset import load_dataset
 from experiments.rag.eval_v2.retrieve import retrieve_cases
 
 
@@ -45,7 +46,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CORPUS_DIR = REPO_ROOT / ".scratch" / "rag" / "corpus"
 DEFAULT_SNAPSHOT_DIR = DEFAULT_CORPUS_DIR / "wikibooks-snapshot"
 DEFAULT_OPENING_TREE_DIR = DEFAULT_CORPUS_DIR / "opening-tree"
-DEFAULT_DATASET = Path(__file__).with_name("dataset.json")
+DEFAULT_DATASET = Path(__file__).with_name("retrieval.json")
 DEFAULT_RUNS_DIR = Path(__file__).with_name("runs")
 
 
@@ -68,7 +69,7 @@ def main() -> int:
             opening_tree_dir=args.opening_tree_dir,
             eval_dataset_path=args.dataset,
         )
-        dataset = json.loads(args.dataset.read_text(encoding="utf-8"))
+        dataset = load_dataset(args.dataset)
         cases = dataset["cases"]
         if args.limit:
             cases = cases[: args.limit]
@@ -232,7 +233,7 @@ def _summarize(cases: list[dict], report: dict, pipeline: dict[str, dict]) -> di
         "false_context_rate": overall["false_context_rate"],
         "child_context_hit_rate": overall["child_context_hit_rate"],
     }
-    for group in ("trap", "standard"):
+    for group in ("adversarial_router", "standard"):
         selected = [
             case for case in cases
             if (case.get("eval_group") or "standard") == group
