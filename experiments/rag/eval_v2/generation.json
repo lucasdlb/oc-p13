@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "description": "Structured coach-generation assertions.",
+  "source_cases_file": "coach_eval_cases.json",
   "cases": [
     {
       "id": "gen-french-aggressive-001",

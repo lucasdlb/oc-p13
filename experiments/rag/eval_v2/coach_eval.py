@@ -27,7 +27,7 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE_DATASET = ROOT / "experiments/rag/eval_v2/retrieval.json"
-CASES_FILE = ROOT / "experiments/rag/eval_v2/coach_eval_cases.json"
+GENERATION_DATASET = ROOT / "experiments/rag/eval_v2/generation.json"
 TACTICAL_TERMS = (
     "attaque",
     "attaquer",
@@ -52,9 +52,11 @@ def _normalize(value: str) -> str:
 
 
 def load_cases() -> list[dict[str, Any]]:
+    generation = json.loads(GENERATION_DATASET.read_text())
+    cases_path = GENERATION_DATASET.with_name(generation.get("source_cases_file", "coach_eval_cases.json"))
     base = {case["id"]: case for case in json.loads(BASE_DATASET.read_text())["cases"]}
     cases = []
-    for definition in json.loads(CASES_FILE.read_text())["cases"]:
+    for definition in json.loads(cases_path.read_text())["cases"]:
         source = base[definition["base_id"]]
         case = {**source, **definition}
         case["id"] = definition["id"]
