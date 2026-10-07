@@ -58,6 +58,13 @@ def load_cases() -> list[dict[str, Any]]:
         source = base[definition["base_id"]]
         case = {**source, **definition}
         case["id"] = definition["id"]
+        if not case.get("fen"):
+            board = chess.Board()
+            moves = case.get("moves") or ["e2e4"]
+            for uci in moves:
+                board.push_uci(uci)
+            case["fen"] = board.fen()
+            case["moves"] = moves
         cases.append(case)
     if len(cases) != 40:
         raise ValueError(f"coach evaluation must contain 40 cases, got {len(cases)}")
@@ -65,9 +72,7 @@ def load_cases() -> list[dict[str, Any]]:
 
 
 def _legal_marker_errors(text: str, fen: str | None) -> list[str]:
-    if not fen:
-        return []
-    board = chess.Board(fen)
+    board = chess.Board(fen) if fen else chess.Board()
     errors = []
     for raw_uci in _MOVE_MARKER.findall(text):
         try:
@@ -118,10 +123,12 @@ def _live_responses(cases: list[dict[str, Any]], base_url: str, timeout: float) 
     responses: list[dict[str, Any]] = []
     with httpx.Client(base_url=base_url, timeout=timeout) as client:
         for case in cases:
+            fen = case.get("fen") or chess.Board().fen()
+            moves = case.get("moves") or ["e2e4"]
             request = {
-                "fen": case["fen"],
-                "pgn": case.get("position") or " ".join(case["moves"]),
-                "moves": case["moves"],
+                "fen": fen,
+                "pgn": case.get("position") or "1. e4",
+                "moves": moves,
                 "level": "intermediaire",
                 "question": case["question"],
             }
