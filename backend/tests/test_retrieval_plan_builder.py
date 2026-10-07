@@ -135,6 +135,19 @@ def test_evaluate_move_quality_requires_stockfish_without_broad_child_prose() ->
     assert all(bucket.relation_to_position != "child" for bucket in plan.buckets)
 
 
+def test_compare_moves_uses_children_and_stockfish() -> None:
+    plan = build_retrieval_plan(TREE, _decision("compare_moves"))
+
+    assert plan.intent == "compare_moves"
+    assert plan.requires_stockfish is True
+    assert [(bucket.name, bucket.relation_to_position) for bucket in plan.buckets] == [
+        ("current", "current"),
+        ("children", "child"),
+    ]
+    assert plan.buckets[1].node_ids == ("berlin-node", "morphy-node")
+    assert plan.reason == "compare_children_with_stockfish"
+
+
 def test_ask_history_limits_history_to_current_node() -> None:
     plan = build_retrieval_plan(TREE, _decision("ask_history"))
 
@@ -209,6 +222,7 @@ def test_default_plans_always_exclude_deep_descendants() -> None:
         "ask_next_moves",
         "ask_specific_candidate",
         "evaluate_move_quality",
+        "compare_moves",
         "ask_trap",
         "ask_mistake",
         "ask_history",

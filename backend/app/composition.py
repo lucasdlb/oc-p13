@@ -52,6 +52,7 @@ class RuntimeServices:
             ("lichess", self.lichess_client),
             ("llm", self.llm_provider),
             ("rag", self.rag_service),
+            ("intent_router", self.intent_router),
             ("mongo", self.mongo),
         ):
             try:

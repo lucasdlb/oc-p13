@@ -214,7 +214,7 @@ def _decision_artifact(decision: IntentDecision) -> dict:
     return {
         "intent": decision.intent,
         "confidence": decision.confidence,
-        "probabilities": dict(decision.probabilities),
+        "probabilities": dict(decision.probabilities) if decision.probabilities is not None else None,
         "matched_candidate_move": _candidate_artifact(decision.matched_candidate_move),
         "reason_codes": list(decision.reason_codes),
         "source": decision.source,

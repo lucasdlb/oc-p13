@@ -15,6 +15,7 @@ RetrievalIntent = Literal[
     "ask_next_moves",
     "ask_specific_candidate",
     "evaluate_move_quality",
+    "compare_moves",
     "ask_trap",
     "ask_mistake",
     "ask_history",

@@ -4,8 +4,8 @@ JEV or the local router may classify intent, but this module owns the final
 constraints and budgets before any vector store is queried.
 """
 
-from backend.app.services.intent_router import IntentDecision, RetrievalIntent
-from backend.app.services.retrieval_contracts import OpeningTreeContext, RetrievalBucket, RetrievalPlan
+from backend.app.services.intent_router import IntentDecision
+from backend.app.services.retrieval_contracts import OpeningTreeContext, RetrievalBucket, RetrievalIntent, RetrievalPlan
 
 
 LOW_CONFIDENCE = 0.5
@@ -34,6 +34,8 @@ def build_retrieval_plan(tree_context: OpeningTreeContext, decision: IntentDecis
         return _ask_specific_candidate(tree_context, decision)
     if decision.intent == "evaluate_move_quality":
         return _evaluate_move_quality(tree_context)
+    if decision.intent == "compare_moves":
+        return _compare_moves(tree_context)
     if decision.intent == "ask_trap":
         return _current_only(tree_context, decision.intent, "trap_current_line")
     if decision.intent == "ask_mistake":
@@ -124,6 +126,27 @@ def _evaluate_move_quality(tree_context: OpeningTreeContext) -> RetrievalPlan:
         state=tree_context.state,
         reason="stockfish_required",
         buckets=(_current_bucket(tree_context, limit=3),),
+        excluded_node_ids=tree_context.excluded_descendant_node_ids,
+        requires_stockfish=True,
+    )
+
+
+def _compare_moves(tree_context: OpeningTreeContext) -> RetrievalPlan:
+    return RetrievalPlan(
+        intent="compare_moves",
+        state=tree_context.state,
+        reason="compare_children_with_stockfish",
+        buckets=(
+            _current_bucket(tree_context, limit=3),
+            RetrievalBucket(
+                name="children",
+                relation_to_position="child",
+                node_ids=tuple(child.node_id for child in tree_context.children),
+                eco_code=tree_context.children[0].eco_code if len(tree_context.children) == 1 else None,
+                limit=3,
+                query_hint="candidate move comparison",
+            ),
+        ),
         excluded_node_ids=tree_context.excluded_descendant_node_ids,
         requires_stockfish=True,
     )
