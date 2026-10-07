@@ -59,6 +59,12 @@ class _Candidate:
     original_index: int
 
 
+@dataclass(frozen=True)
+class _BucketSearchResult:
+    chunks: list[ScoredChunk]
+    fallback_reason: str | None = None
+
+
 class RagStore(Protocol):
     def search(
         self,
@@ -114,10 +120,12 @@ class RagService:
 
         candidates: list[_Candidate] = []
         diagnostics: list[RerankingDiagnostic] = []
+        fallback_reasons: list[str] = []
         search_started = time.perf_counter()
         try:
             for bucket in plan.buckets:
-                for scored in self._search_bucket(vector, bucket, plan):
+                search_result = self._search_bucket(vector, bucket, plan)
+                for scored in search_result.chunks:
                     decision = _score_candidate(scored, bucket, plan)
                     if decision.excluded:
                         diagnostics.append(_diagnostic(scored, bucket, decision, "excluded"))
@@ -132,6 +140,8 @@ class RagService:
                             original_index=len(candidates),
                         )
                     )
+                if search_result.fallback_reason:
+                    fallback_reasons.append(search_result.fallback_reason)
         except MilvusStoreError:
             logger.info(
                 "RAG retrieval timing",
@@ -161,16 +171,20 @@ class RagService:
                 "context_count": len(contexts),
             },
         )
-        return RagRetrievalResult(contexts=contexts, reranking_diagnostics=tuple(diagnostics))
+        return RagRetrievalResult(
+            contexts=contexts,
+            fallback_reasons=tuple(dict.fromkeys(fallback_reasons)),
+            reranking_diagnostics=tuple(diagnostics),
+        )
 
     def _search_bucket(
         self,
         vector: Sequence[float],
         bucket: RetrievalBucket,
         plan: RetrievalPlan,
-    ) -> list[ScoredChunk]:
+    ) -> _BucketSearchResult:
         if bucket.limit <= 0:
-            return []
+            return _BucketSearchResult([])
         results = self._store.search(
             vector,
             bucket.limit,
@@ -178,11 +192,10 @@ class RagService:
             min_score=self._min_score,
         )
         if results or not bucket.eco_code or not bucket.node_ids:
-            return results
+            return _BucketSearchResult(results)
 
-        # Current demo corpus can be ECO-mapped before full opening-node mapping.
-        # Keep node filtering as the primary path, then degrade to the same bucket
-        # policy scoped by ECO so the API can still return attributed prose.
+        # Keep compatibility with legacy or partially mapped corpora, but retain
+        # node filtering as the primary path and expose the degradation explicitly.
         eco_results = self._store.search(
             vector,
             bucket.limit,
@@ -191,15 +204,18 @@ class RagService:
             min_score=self._min_score,
         )
         if eco_results:
-            return eco_results
+            return _BucketSearchResult(eco_results, "rag_eco_fallback")
 
-        return self._store.search(
+        unmapped_results = self._store.search(
             vector,
             bucket.limit,
             eco_code=bucket.eco_code,
             metadata_filter=MilvusMetadataFilter(),
             min_score=self._min_score,
         )
+        if unmapped_results:
+            return _BucketSearchResult(unmapped_results, "rag_eco_fallback")
+        return _BucketSearchResult([], "rag_no_chunks_for_node")
 
 
 def _query_text(query: str, plan: RetrievalPlan) -> str:

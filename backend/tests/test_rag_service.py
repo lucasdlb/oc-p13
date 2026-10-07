@@ -192,6 +192,7 @@ def test_current_bucket_falls_back_to_eco_when_chunks_are_not_node_mapped() -> N
 
     assert [context.chunk_id for context in result.contexts] == ["current-eco"]
     assert result.contexts[0].relation_to_position == "current"
+    assert result.fallback_reasons == ("rag_eco_fallback",)
     assert store.calls == [
         {
             "k": 4,
@@ -215,6 +216,16 @@ def test_current_bucket_falls_back_to_eco_when_chunks_are_not_node_mapped() -> N
             "min_score": None,
         },
     ]
+
+
+def test_current_bucket_reports_missing_node_chunks_when_eco_fallback_is_empty() -> None:
+    plan = _current_plan(OpeningTreeContext(current=RUY))
+    service = RagService(embedding_provider=FakeEmbeddingProvider(), store=FakeStore())
+
+    result = service.retrieve(plan, "Explain this position")
+
+    assert result.contexts == ()
+    assert result.fallback_reasons == ("rag_no_chunks_for_node",)
 
 
 def test_child_allowed_plan_labels_child_context_as_conditional() -> None:

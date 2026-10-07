@@ -32,7 +32,7 @@ query_instruction = "Given a web search query, retrieve relevant passages that a
 timeout_seconds = 120.0
 
 [milvus]
-collection = "chess_knowledge_fdfff4354c1c_33d349ba87d3"
+collection = "chess_knowledge_fdfff4354c1c_33d349ba87d3_a608853c1518"
 metric_type = "COSINE"
 index_type = "HNSW"
 index_m = 16

@@ -70,8 +70,11 @@ cache. Seules les pages Wikibooks sont nettoyees et vectorisees; les TSV restent
 structurees. La CLI refuse un corpus vide et le nettoyage rejette toute page sans prose exploitable
 ou contenant encore du markup interdit.
 
-Ce corpus cure de treize pages est celui que sert la demo (`config.toml`). Le corpus complet vit
-cote a cote, avec son propre manifeste versionne :
+Le corpus complet nettoye est celui que sert maintenant la demo (`config.toml`). La collection
+Milvus correspondante est construite depuis le snapshot complet et contient les pages Wikibooks
+mappees par noeud d'ouverture. Le corpus de treize pages reste disponible comme fixture de demarrage
+rapide ; il ne doit pas etre utilise comme collection runtime si une couverture complete est attendue.
+Le corpus complet vit cote a cote avec son propre manifeste versionne :
 
 ```bash
 uv run python -m experiments.rag.clean_report
@@ -81,7 +84,9 @@ uv run python -m experiments.rag.build_snapshot --force
 `clean_report` relit `wikibooks-full/manifest.json`, applique les regles de classification et le
 mapper d'alias d'ouverture, et reecrit `wikibooks-clean/` ; `build_snapshot` produit
 `wikibooks-snapshot/` (immuable, reference par hash et lie au jeu d'evaluation Eval V2). Un
-rebuild change le hash du snapshot, donc le nom de la collection cible.
+rebuild change le hash du snapshot, donc le nom de la collection cible. Apres une ingestion, mettre
+a jour `[milvus].collection` avec le nom exact imprime par la CLI ; cette valeur est le nom final
+consomme par le runtime, pas un prefixe a reutiliser pour une ingestion suivante.
 
 ## Ingestion
 
