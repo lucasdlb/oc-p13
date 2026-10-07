@@ -370,10 +370,10 @@ def _coach_explanation(
         fallbacks=(),
     )
     try:
-        text = coach_service.explain(context, level=case.get("level") or "intermediaire")
+        result = coach_service.explain(context, level=case.get("level") or "intermediaire")
     except CoachFallbackError as exc:
         return {"text": exc.text, "fallback_label": exc.fallback_label}
-    return {"text": text, "fallback_label": None}
+    return {"text": result.text, "fallback_label": result.fallback}
 
 
 def _build_provider(name: str, settings) -> EmbeddingProvider:  # type: ignore[no-untyped-def]
