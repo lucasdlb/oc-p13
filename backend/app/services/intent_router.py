@@ -248,9 +248,11 @@ class JevIntentClassifier:
         *,
         settings: TypeSafeSettings | None = None,
         client: httpx.Client | None = None,
+        allowed_intents: Sequence[RetrievalIntent] | None = None,
     ) -> None:
         self._settings = settings or TypeSafeSettings()
         self._client = client or httpx.Client(timeout=self._settings.timeout_seconds)
+        self._allowed_intents = tuple(allowed_intents or _ROUTABLE_INTENTS)
 
     def classify(self, context: IntentRouterContext) -> IntentDecision:
         if not self._settings.enabled:
@@ -262,7 +264,11 @@ class JevIntentClassifier:
             response = self._client.post(
                 _join_url(self._settings.base_url, "/v1/systemone"),
                 headers={"Authorization": f"Bearer {self._settings.api_key.get_secret_value()}"},
-                json=_systemone_payload(context, self._settings.model),
+                json=_systemone_payload(
+                    context,
+                    self._settings.model,
+                    allowed_intents=self._allowed_intents,
+                ),
             )
             response.raise_for_status()
             payload = response.json()
@@ -271,7 +277,11 @@ class JevIntentClassifier:
         except ValueError as exc:
             raise ValueError("TypeSafe provider returned non-JSON response") from exc
 
-        decision = _systemone_decision(payload, default_model=self._settings.model)
+        decision = _systemone_decision(
+            payload,
+            default_model=self._settings.model,
+            allowed_intents=self._allowed_intents,
+        )
         logger.info(
             "JEV intent classified",
             extra={
@@ -336,7 +346,12 @@ def _normalize_probabilities(
     return {intent: value / total for intent, value in parsed.items()}
 
 
-def _systemone_payload(context: IntentRouterContext, model: str) -> dict:
+def _systemone_payload(
+    context: IntentRouterContext,
+    model: str,
+    *,
+    allowed_intents: Sequence[RetrievalIntent] = _ROUTABLE_INTENTS,
+) -> dict:
     return {
         "model": model,
         "state": {
@@ -353,7 +368,7 @@ def _systemone_payload(context: IntentRouterContext, model: str) -> dict:
             "intent": {
                 "type": "choice",
                 "instructions": "Classify the user's retrieval intent for a chess opening coach. Choose the option that best describes what the user wants.",
-                "criteria": {intent: _INTENT_DESCRIPTIONS[intent] for intent in _ROUTABLE_INTENTS},
+                "criteria": {intent: _INTENT_DESCRIPTIONS[intent] for intent in allowed_intents},
             }
         },
     }
@@ -369,7 +384,12 @@ def _candidate_move_payload(move: CandidateMove) -> dict:
     }
 
 
-def _systemone_decision(payload: object, *, default_model: str) -> IntentDecision:
+def _systemone_decision(
+    payload: object,
+    *,
+    default_model: str,
+    allowed_intents: Sequence[RetrievalIntent] = _ROUTABLE_INTENTS,
+) -> IntentDecision:
     if not isinstance(payload, Mapping):
         raise ValueError("TypeSafe response must be an object")
 
@@ -388,7 +408,7 @@ def _systemone_decision(payload: object, *, default_model: str) -> IntentDecisio
         raise ValueError("TypeSafe answer for 'intent' must be a choice")
 
     choice = answer.get("choice")
-    if choice not in _INTENTS:
+    if choice not in allowed_intents:
         raise ValueError(f"unknown TypeSafe retrieval intent {choice!r}")
 
     confidence = answer.get("confidence")

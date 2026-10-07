@@ -1,8 +1,8 @@
 """JEV vs deterministic intent routing A/B harness.
 
-Runs the Eval V2 dataset twice: once with deterministic rule-based routing and once
-with TypeSafe JEV routing. Records intent decisions, fallback reasons, retrieval
-metrics, and coach prose for each arm. Produces a JSON comparison report.
+Runs the Eval V2 dataset with deterministic, restricted-vocabulary JEV, and
+full-vocabulary JEV routing. Records intent decisions, fallback reasons,
+retrieval metrics, and conservative coach prose for each arm.
 
 Run:
     uv run python -m experiments.rag.eval_v2.routing_ab \
@@ -28,7 +28,12 @@ from backend.app.services.embeddings import (
     EmbeddingProviderError,
     OllamaEmbeddingProvider,
 )
-from backend.app.services.intent_router import IntentRouter, JevIntentClassifier
+from backend.app.services.intent_router import (
+    IntentRouter,
+    JevIntentClassifier,
+    _INTENTS,
+    _ROUTABLE_INTENTS,
+)
 from backend.app.services.llm import OllamaLLMProvider
 from backend.app.services.milvus import MilvusStore, MilvusStoreError
 from backend.app.services.opening_tree import OpeningTree
@@ -93,8 +98,18 @@ def main() -> int:
 
         deterministic_router = IntentRouter()
         jev_settings = settings.typesafe.model_copy(update={"enabled": True})
-        jev_router = IntentRouter(
-            primary=JevIntentClassifier(settings=jev_settings),
+        jev_restricted_router = IntentRouter(
+            primary=JevIntentClassifier(
+                settings=jev_settings,
+                allowed_intents=_ROUTABLE_INTENTS,
+            ),
+            medium_confidence=jev_settings.medium_confidence,
+        )
+        jev_full_router = IntentRouter(
+            primary=JevIntentClassifier(
+                settings=jev_settings,
+                allowed_intents=_INTENTS,
+            ),
             medium_confidence=jev_settings.medium_confidence,
         )
 
@@ -109,18 +124,33 @@ def main() -> int:
             coach_service,
             args,
         )
-        jev = _run_arm(
-            "jev",
+        jev_restricted = _run_arm(
+            "jev_restricted",
             cases,
             store,
             provider,
             tree,
-            jev_router,
+            jev_restricted_router,
             coach_service,
             args,
         )
 
-        comparison = _compare(cases, deterministic, jev)
+        jev_full = _run_arm(
+            "jev_full",
+            cases,
+            store,
+            provider,
+            tree,
+            jev_full_router,
+            coach_service,
+            args,
+        )
+        arms = {
+            "deterministic": deterministic,
+            "jev_restricted": jev_restricted,
+            "jev_full": jev_full,
+        }
+        comparison = _compare(cases, arms)
         report = {
             "started_at": started_at,
             "finished_at": datetime.now(timezone.utc).isoformat(),
@@ -131,9 +161,9 @@ def main() -> int:
             "config_hash": _config_hash(args, settings, digest),
             "case_count": len(cases),
             "deterministic": deterministic["summary"],
-            "jev": jev["summary"],
+            "arms": {name: arm["summary"] for name, arm in arms.items()},
             "comparison": comparison,
-            "per_case": _per_case_report(cases, deterministic, jev),
+            "per_case": _per_case_report(cases, arms),
         }
     except (EmbeddingProviderError, MilvusStoreError, SnapshotError, RuntimeError) as exc:
         print(f"routing ab failed: {exc}", file=sys.stderr)
@@ -194,7 +224,7 @@ def _summarize(cases: list[dict], report: dict, pipeline: dict[str, dict]) -> di
         intents[intent] = intents.get(intent, 0) + 1
         if decision["source"] in FALLBACK_SOURCES:
             fallback_count += 1
-    return {
+    summary = {
         "intent_distribution": intents,
         "fallback_rate": fallback_count / len(cases) if cases else 0.0,
         "coach_usable_context_rate": overall["coach_usable_context_rate"],
@@ -202,109 +232,62 @@ def _summarize(cases: list[dict], report: dict, pipeline: dict[str, dict]) -> di
         "false_context_rate": overall["false_context_rate"],
         "child_context_hit_rate": overall["child_context_hit_rate"],
     }
+    for group in ("trap", "standard"):
+        selected = [
+            case for case in cases
+            if (case.get("eval_group") or "standard") == group
+        ]
+        metrics = [report["per_case"][case["id"]] for case in selected]
+        summary[group] = {
+            "case_count": len(metrics),
+            "intent_accuracy": sum(
+                pipeline[case["id"]]["intent_decision"]["intent"] == case.get("intent")
+                for case in selected
+            ) / len(metrics) if metrics else 0.0,
+            "false_current_line_rate": sum(m["false_current_line"] for m in metrics) / len(metrics) if metrics else 0.0,
+            "fallback_rate": sum(
+                pipeline[case["id"]]["intent_decision"]["source"] in FALLBACK_SOURCES
+                for case in selected
+            ) / len(metrics) if metrics else 0.0,
+            "coach_usable_context_rate": sum(m["coach_usable_context"] for m in metrics) / len(metrics) if metrics else 0.0,
+        }
+    return summary
 
 
-def _compare(cases: list[dict], deterministic: dict, jev: dict) -> dict:
-    det_pipeline = deterministic["pipeline"]
-    jev_pipeline = jev["pipeline"]
-
-    intent_agreements = 0
-    intent_vs_ground_truth = {"deterministic": 0, "jev": 0}
-    jev_fallbacks = 0
-    latency_ms = {"deterministic": 0.0, "jev": 0.0}
-    coach_text_agreements = 0
-    coach_fallbacks = {"deterministic": 0, "jev": 0}
-
-    for case in cases:
-        det_decision = det_pipeline[case["id"]]["intent_decision"]
-        jev_decision = jev_pipeline[case["id"]]["intent_decision"]
-        ground_truth = case.get("intent")
-
-        if det_decision["intent"] == jev_decision["intent"]:
-            intent_agreements += 1
-        if det_decision["intent"] == ground_truth:
-            intent_vs_ground_truth["deterministic"] += 1
-        if jev_decision["intent"] == ground_truth:
-            intent_vs_ground_truth["jev"] += 1
-        if jev_decision["source"] in FALLBACK_SOURCES:
-            jev_fallbacks += 1
-
-        det_total = deterministic["latency"]["total"][cases.index(case)]
-        jev_total = jev["latency"]["total"][cases.index(case)]
-        latency_ms["deterministic"] += det_total
-        latency_ms["jev"] += jev_total
-
-        det_coach = det_pipeline[case["id"]].get("coach_explanation", {})
-        jev_coach = jev_pipeline[case["id"]].get("coach_explanation", {})
-        if det_coach.get("text") == jev_coach.get("text"):
-            coach_text_agreements += 1
-        if det_coach.get("fallback_label"):
-            coach_fallbacks["deterministic"] += 1
-        if jev_coach.get("fallback_label"):
-            coach_fallbacks["jev"] += 1
-
-    n = len(cases) or 1
-    return {
-        "intent_agreement_rate": intent_agreements / n,
-        "intent_accuracy": {
-            "deterministic": intent_vs_ground_truth["deterministic"] / n,
-            "jev": intent_vs_ground_truth["jev"] / n,
-        },
-        "jev_fallback_rate": jev_fallbacks / n,
-        "coach_text_agreement_rate": coach_text_agreements / n,
-        "coach_fallback_counts": coach_fallbacks,
-        "mean_latency_ms": {
-            "deterministic": latency_ms["deterministic"] / n,
-            "jev": latency_ms["jev"] / n,
-        },
-        "coach_usable_context_rate_delta": (
-            jev["summary"]["coach_usable_context_rate"]
-            - deterministic["summary"]["coach_usable_context_rate"]
-        ),
-        "false_current_line_rate_delta": (
-            jev["summary"]["false_current_line_rate"]
-            - deterministic["summary"]["false_current_line_rate"]
-        ),
-        "false_context_rate_delta": (
-            jev["summary"]["false_context_rate"]
-            - deterministic["summary"]["false_context_rate"]
-        ),
-    }
+def _compare(cases: list[dict], arms: dict[str, dict]) -> dict:
+    baseline = arms["deterministic"]
+    result: dict[str, dict] = {}
+    for name, arm in arms.items():
+        pipeline = arm["pipeline"]
+        accuracy = sum(
+            pipeline[case["id"]]["intent_decision"]["intent"] == case.get("intent")
+            for case in cases
+        ) / (len(cases) or 1)
+        result[name] = {
+            "intent_accuracy": accuracy,
+            "fallback_rate": arm["summary"]["fallback_rate"],
+            "mean_latency_ms": sum(arm["latency"]["total"]) / (len(cases) or 1),
+            "coach_usable_context_rate_delta_vs_deterministic": arm["summary"]["coach_usable_context_rate"] - baseline["summary"]["coach_usable_context_rate"],
+            "false_current_line_rate_delta_vs_deterministic": arm["summary"]["false_current_line_rate"] - baseline["summary"]["false_current_line_rate"],
+        }
+    return result
 
 
-def _per_case_report(cases: list[dict], deterministic: dict, jev: dict) -> dict:
+def _per_case_report(cases: list[dict], arms: dict[str, dict]) -> dict:
     report: dict[str, dict] = {}
-    det_pipeline = deterministic["pipeline"]
-    jev_pipeline = jev["pipeline"]
     for index, case in enumerate(cases):
         case_id = case["id"]
-        det_decision = det_pipeline[case_id]["intent_decision"]
-        jev_decision = jev_pipeline[case_id]["intent_decision"]
-        det_coach = det_pipeline[case_id].get("coach_explanation", {})
-        jev_coach = jev_pipeline[case_id].get("coach_explanation", {})
-        report[case_id] = {
-            "ground_truth_intent": case.get("intent"),
-            "deterministic": {
-                "intent": det_decision["intent"],
-                "source": det_decision["source"],
-                "reason_codes": det_decision["reason_codes"],
-                "latency_ms": deterministic["latency"]["total"][index],
-                "coach_explanation": {
-                    "text": det_coach.get("text"),
-                    "fallback_label": det_coach.get("fallback_label"),
-                },
-            },
-            "jev": {
-                "intent": jev_decision["intent"],
-                "source": jev_decision["source"],
-                "reason_codes": jev_decision["reason_codes"],
-                "latency_ms": jev["latency"]["total"][index],
-                "coach_explanation": {
-                    "text": jev_coach.get("text"),
-                    "fallback_label": jev_coach.get("fallback_label"),
-                },
-            },
-        }
+        case_report = {"ground_truth_intent": case.get("intent")}
+        for name, arm in arms.items():
+            decision = arm["pipeline"][case_id]["intent_decision"]
+            coach = arm["pipeline"][case_id].get("coach_explanation", {})
+            case_report[name] = {
+                "intent": decision["intent"], "source": decision["source"],
+                "reason_codes": decision["reason_codes"],
+                "latency_ms": arm["latency"]["total"][index],
+                "coach_explanation": {"text": coach.get("text"), "fallback_label": coach.get("fallback_label")},
+            }
+        report[case_id] = case_report
     return report
 
 
@@ -349,7 +332,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR)
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--min-score", type=float, default=None)
-    parser.add_argument("--coach", choices=["conservative", "llm"], default="llm")
+    parser.add_argument("--coach", choices=["conservative"], default="conservative")
     parser.add_argument("--limit", type=int, default=None)
     return parser.parse_args()
 
