@@ -370,6 +370,9 @@ class RecommendedMove(ContractModel):
     move_share: float | None = None
     relevant: bool = True
     badges: list[str] | None = None
+    score: dict | str | float | None = None
+    engine_score: dict | str | None = None
+    counterexample: str | None = None
 
 
 class StockfishEval(ContractModel):

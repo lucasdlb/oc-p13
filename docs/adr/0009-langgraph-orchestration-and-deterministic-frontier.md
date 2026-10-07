@@ -12,9 +12,10 @@ points listes, remplace des clauses de l'ADR 0006 et de l'ADR 0007.
 
 ## Etat d'implementation
 
-Le runtime actuel reste imperatif : les routes FastAPI appellent directement les services
-stabilises et `langgraph` n'est pas encore une dependance de `pyproject.toml`. Cette ADR accepte
-la trajectoire cible, mais ne doit pas etre lue comme la description du runtime present.
+Le runtime actuel reste principalement imperatif : les routes FastAPI appellent directement les
+services stabilises et les graphes minces deleguent a ces services. Le routeur d'intention et le
+planner de retrieval constituent maintenant le point de decision code (`compare_moves` inclus) ;
+`langgraph` reste une couche d'orchestration et ne porte pas cette logique metier.
 
 ## Contexte
 

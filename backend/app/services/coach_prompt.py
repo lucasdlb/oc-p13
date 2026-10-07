@@ -93,6 +93,8 @@ def build_prompt(context: CoachContext, level: str) -> str:
                 f"- {_move_value(move, 'san') or '?'} ({_move_value(move, 'uci') or '?'}) : "
                 f"{share} des parties, {games_value or '?'} parties"
             )
+    if context.intent == "compare_moves":
+        lines.extend(["", _comparison_table(context, allowed)])
     lines.extend(["", "Coups autorises (UCI obligatoire dans les marqueurs) :"])
     lines.extend(f"- {move['san']} -> {move['uci']}" for move in allowed)
     if context.lichess_stats:
@@ -189,6 +191,45 @@ def _prompt_recommended_moves(moves: Iterable[object]) -> list[object]:
         reverse=True,
     )
     return ranked[:3]
+
+
+def _comparison_table(context: CoachContext, allowed: list[dict[str, str]]) -> str:
+    records = {record["uci"]: record for record in allowed}
+    moves = _prompt_recommended_moves(context.recommended_moves)
+    lines = [
+        "Tableau comparatif determine (ne pas completer les valeurs absentes) :",
+        "| Coup | Part Lichess | Score | Evaluation Stockfish | Contre-exemple |",
+        "| --- | ---: | --- | --- | --- |",
+    ]
+    best_move = _move_value(context.stockfish, "best_move") if context.stockfish else None
+    for move in moves:
+        uci = str(_move_value(move, "uci") or "")
+        record = records.get(uci, {"san": str(_move_value(move, "san") or "?"), "uci": uci})
+        share_value = _move_value(move, "move_share")
+        share = f"{share_value:.1%}" if isinstance(share_value, float) else "non disponible"
+        score = _move_value(move, "score") or "non disponible"
+        counterexample = _move_value(move, "counterexample") or "non disponible"
+        if best_move == uci and context.stockfish:
+            score = _stockfish_score(context.stockfish)
+        elif context.stockfish is None:
+            score = "repli: moteur indisponible"
+        marker = f"[[move:uci={record['uci']},label={record['san']}]]"
+        lines.append(f"| {marker} | {share} | non disponible | {score} | {counterexample} |")
+    if not moves:
+        lines.append("| non disponible | non disponible | non disponible | non disponible | non disponible |")
+    return "\n".join(lines)
+
+
+def _stockfish_score(stockfish: object) -> str:
+    mate = _move_value(stockfish, "mate")
+    if mate is not None:
+        return f"mat {mate}"
+    score = _move_value(stockfish, "score")
+    if isinstance(score, dict):
+        score_type = score.get("type", "cp")
+        value = score.get("value")
+        return f"{score_type} {value}" if value is not None else "non disponible"
+    return str(score or "non disponible")
 
 
 def _render_passage(

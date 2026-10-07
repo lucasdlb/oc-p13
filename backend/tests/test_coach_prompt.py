@@ -151,3 +151,16 @@ def test_prose_detector_reports_illegal_san_without_rewriting() -> None:
     findings = find_illegal_san_citations("Le plan preparant Bg4 est actif.", AFTER_E4_FEN)
 
     assert findings == ("Bg4",)
+
+
+def test_compare_prompt_contains_computed_table_and_engine_fallback() -> None:
+    context = _context(
+        intent="compare_moves",
+        recommended_moves=[{"san": "e4", "uci": "e2e4", "move_share": 0.7}],
+    )
+
+    prompt = build_prompt(context, "intermediaire")
+
+    assert "Tableau comparatif determine" in prompt
+    assert "| [[move:uci=e2e4,label=e4]] | 70.0%" in prompt
+    assert "repli: moteur indisponible" in prompt
