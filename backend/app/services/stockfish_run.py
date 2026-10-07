@@ -36,6 +36,7 @@ class StockfishRunService:
         cache_status = dict(facts.cache)
         fallbacks: list[str] = []
         try:
+            requires_stockfish = (run.coach_context_artifact or {}).get("intent") == "compare_moves"
             result = _run_if_needed(
                 stockfish_service,
                 cache_store,
@@ -46,6 +47,8 @@ class StockfishRunService:
                 cache_status,
                 depth=self._settings.depth,
                 binary=self._settings.binary,
+                force=requires_stockfish,
+                multipv=3 if requires_stockfish else 1,
             )
         except Exception:  # noqa: BLE001 - an unavailable engine is a safe fallback
             result = {"status": "unavailable"}
@@ -98,19 +101,21 @@ def _run_if_needed(
     cache_status: dict,
     depth: int,
     binary: str,
+    force: bool = False,
+    multipv: int = 1,
 ) -> dict | None:
     has_relevant_move = any(move.relevant for move in recommended_moves)
-    if local_opening_matched and recommended_moves and not confidence["low_confidence"] and has_relevant_move:
+    if not force and local_opening_matched and recommended_moves and not confidence["low_confidence"] and has_relevant_move:
         cache_status["stockfish"] = "skipped"
         return None
-    if confidence["low_confidence"] or not has_relevant_move:
-        key = stockfish_cache_key(fen, depth, engine_version(binary))
+    if force or confidence["low_confidence"] or not has_relevant_move:
+        key = stockfish_cache_key(fen, depth, engine_version(binary), multipv)
         if cache_store.available():
             cached = cache_store.get_stockfish(key)
             if isinstance(cached, dict) and cached.get("status") == "ok":
                 cache_status["stockfish"] = "hit"
                 return cached
-        result = stockfish_service.evaluate(fen)
+        result = stockfish_service.evaluate(fen, multipv=multipv)
         cache_status["stockfish"] = "miss" if cache_store.available() else "skipped"
         if isinstance(result, dict) and result.get("status") == "ok" and cache_store.available():
             cache_store.set_stockfish(key, result)

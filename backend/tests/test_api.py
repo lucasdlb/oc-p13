@@ -130,12 +130,15 @@ class DisabledLichessClient(FallbackLichessClient):
 
 
 class SuccessfulStockfishService:
-    def evaluate(self, _fen: str) -> dict:
+    def evaluate(self, _fen: str, *, multipv: int = 1) -> dict:
         return {
             "status": "ok",
             "best_move": "g1f3",
             "score": {"type": "cp", "value": 24},
             "depth": 12,
+            "pv": ("g1f3",),
+            "multipv": multipv,
+            "variations": [],
         }
 
 
@@ -152,9 +155,9 @@ class CountingStockfishService(SuccessfulStockfishService):
     def __init__(self) -> None:
         self.calls = 0
 
-    def evaluate(self, _fen: str) -> dict:
+    def evaluate(self, _fen: str, *, multipv: int = 1) -> dict:
         self.calls += 1
-        return super().evaluate(_fen)
+        return super().evaluate(_fen, multipv=multipv)
 
 
 RUY_TREE_NODE = OpeningTreeNodeContext(
@@ -1021,6 +1024,9 @@ def test_analyze_position_runs_stockfish_for_unmatched_position() -> None:
         "best_move": "g1f3",
         "score": {"type": "cp", "value": 24},
         "depth": 12,
+        "pv": ["g1f3"],
+        "multipv": 1,
+        "variations": [],
     }
 
 
@@ -1068,6 +1074,9 @@ def test_stockfish_endpoint_returns_evaluation() -> None:
         "best_move": "g1f3",
         "score": {"type": "cp", "value": 24},
         "depth": 12,
+        "pv": ["g1f3"],
+        "multipv": 1,
+        "variations": [],
     }
 
 

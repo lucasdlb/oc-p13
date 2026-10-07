@@ -131,6 +131,7 @@ def _live_responses(cases: list[dict[str, Any]], base_url: str, timeout: float) 
                 run_id = analysis.json()["run_id"]
                 rag = client.post("/api/rag-context", json={"run_id": run_id})
                 rag.raise_for_status()
+                client.post("/api/stockfish/analyze-run", json={"run_id": run_id}).raise_for_status()
                 coach = client.post(
                     "/api/coach-explanation",
                     json={"run_id": run_id, "level": "intermediaire"},

@@ -100,7 +100,7 @@ def test_stockfish_cache_key_normalizes_fen_and_covers_depth_and_version() -> No
 
     key = stockfish_cache_key(fen, 12, "Stockfish 17")
 
-    assert key == f"stockfish|{epd}|d12|Stockfish 17"
+    assert key == f"stockfish|{epd}|d12|mpv1|Stockfish 17"
     assert stockfish_cache_key(fen, 13, "Stockfish 17") != key
     assert stockfish_cache_key(fen, 12, "Stockfish 16") != key
 

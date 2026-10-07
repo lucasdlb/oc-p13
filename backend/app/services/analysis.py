@@ -24,7 +24,6 @@ from backend.app.services.cache_store import (
     CacheStore,
     lichess_cache_key,
     masters_cache_key,
-    stockfish_cache_key,
 )
 from backend.app.services.coach import CoachService, ConservativeCoachService
 from backend.app.services.lichess import (
@@ -48,7 +47,7 @@ from backend.app.services.retrieval_contracts import (
 from backend.app.services.retrieval_plan_builder import build_retrieval_plan
 from backend.app.services.run_store import RunStore, new_run_id, now_iso as run_now_iso
 from backend.app.services.session_store import SessionStore, build_move_docs
-from backend.app.services.stockfish import StockfishService, engine_version
+from backend.app.services.stockfish import StockfishService
 from backend.app.services.stockfish_run import StockfishRunService
 
 
@@ -738,44 +737,6 @@ def _move_rank_key(move: RecommendedMove, side: str) -> tuple[int, float, int]:
         chance or 0,
         move.games or 0,
     )
-
-
-def _run_stockfish_if_needed(
-    stockfish_service: StockfishService,
-    cache_store: CacheStore,
-    fen: str,
-    confidence: dict,
-    recommended_moves: list[RecommendedMove],
-    local_opening_matched: bool,
-    cache_status: dict,
-    depth: int,
-    binary: str,
-) -> dict | None:
-    has_relevant_move = any(move.relevant for move in recommended_moves)
-    if (
-        local_opening_matched
-        and recommended_moves
-        and not confidence["low_confidence"]
-        and has_relevant_move
-    ):
-        cache_status["stockfish"] = "skipped"
-        return None
-    if confidence["low_confidence"] or not has_relevant_move:
-        key = stockfish_cache_key(fen, depth, engine_version(binary))
-        if cache_store.available():
-            cached = cache_store.get_stockfish(key)
-            if isinstance(cached, dict) and cached.get("status") == "ok":
-                cache_status["stockfish"] = "hit"
-                return cached
-
-        result = stockfish_service.evaluate(fen)
-        cache_status["stockfish"] = "miss" if cache_store.available() else "skipped"
-        if isinstance(result, dict) and result.get("status") == "ok" and cache_store.available():
-            cache_store.set_stockfish(key, result)
-        return result
-
-    cache_status["stockfish"] = "skipped"
-    return None
 
 
 def _retrieve_rag_context(

@@ -35,9 +35,9 @@ def masters_cache_key(moves: list[str]) -> str:
     return f"masters|{normalized}"
 
 
-def stockfish_cache_key(fen: str, depth: int, engine_version: str) -> str:
+def stockfish_cache_key(fen: str, depth: int, engine_version: str, multipv: int = 1) -> str:
     epd = chess.Board(fen).epd()
-    return f"stockfish|{epd}|d{depth}|{engine_version}"
+    return f"stockfish|{epd}|d{depth}|mpv{multipv}|{engine_version}"
 
 
 def videos_cache_key(query: str) -> str:
