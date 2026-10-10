@@ -2,8 +2,8 @@
   color: #f4efe7;
   display: grid;
   gap: 10px;
-  font-size: 0.8rem;
-  line-height: 1.38;
+  font-size: 0.88rem;
+  line-height: 1.55;
 }
 
 .coach-markdown > :first-child {
@@ -21,7 +21,7 @@
   color: #fffaf2;
   letter-spacing: -0.03em;
   line-height: 1.15;
-  margin: 10px 0 0;
+  margin: 16px 0 0;
 }
 
 .coach-markdown h1 {
@@ -35,6 +35,14 @@
 .coach-markdown h3,
 .coach-markdown h4 {
   font-size: 0.94rem;
+  font-weight: 900;
+}
+
+.coach-markdown h1:first-child,
+.coach-markdown h2:first-child,
+.coach-markdown h3:first-child,
+.coach-markdown h4:first-child {
+  margin-top: 0;
 }
 
 .coach-markdown p,

@@ -11,9 +11,8 @@ import { MoveHistoryComponent } from './move-history/move-history';
 import { AnalysisService } from './services/analysis';
 import { GameSnapshot, GameStateService } from './services/game-state';
 
-const PENDING_COACH_TEXT =
-  "Le coach detaille est en cours de redaction. Les donnees de l'explorateur sont deja disponibles ci-contre.";
 const COACH_STREAM_ERROR_TEXT = 'Explication indisponible pour cette position.';
+const ANALYSIS_DEBOUNCE_MS = 700;
 
 @Component({
   selector: 'app-root',
@@ -62,6 +61,9 @@ export class App {
   private stockfishSubscription?: Subscription;
   private ragSubscription?: Subscription;
   private coachEventSource: EventSource | null = null;
+  private analysisDebounce?: ReturnType<typeof setTimeout>;
+  private coachRequested = false;
+  private coachRunId?: string;
 
   setLevel(level: PedagogicalLevel): void {
     this.level.set(level);
@@ -94,6 +96,17 @@ export class App {
     }
 
     this.question.set(question);
+    this.coachRequested = true;
+    this.showAnalysis(true);
+  }
+
+  requestExplanation(): void {
+    if (this.currentIndex() === 0) {
+      return;
+    }
+
+    this.question.set(null);
+    this.coachRequested = true;
     this.showAnalysis();
   }
 
@@ -106,6 +119,7 @@ export class App {
     this.error.set(null);
     this.question.set(null);
     this.sessionId.set(null);
+    this.coachRequested = false;
   }
 
   playDemoMove(): void {
@@ -165,6 +179,7 @@ export class App {
     this.previewedMove.set(null);
     this.previewedSquare.set(null);
     this.question.set(null);
+    this.coachRequested = false;
     this.syncGameState(snapshot);
     if (snapshot.currentIndex === 0) {
       this.cancelPendingWork();
@@ -183,6 +198,7 @@ export class App {
 
     if (result.ok) {
       this.question.set(null);
+      this.coachRequested = false;
       this.showAnalysis();
       return;
     }
@@ -199,6 +215,7 @@ export class App {
 
     if (result.ok) {
       this.question.set(null);
+      this.coachRequested = false;
       this.showAnalysis();
       return;
     }
@@ -214,7 +231,7 @@ export class App {
     this.showAnalysis();
   }
 
-  private showAnalysis(): void {
+  private showAnalysis(immediate = false): void {
     this.cancelPendingWork();
     const cached = this.analysisCache.get(this.positionKey());
     if (cached) {
@@ -224,7 +241,17 @@ export class App {
       this.startProgressive(cached, this.analysisGeneration, this.positionKey());
       return;
     }
-    this.analyze();
+    if (immediate) {
+      this.analyze();
+      return;
+    }
+    const generation = this.analysisGeneration;
+    this.analysisDebounce = setTimeout(() => {
+      this.analysisDebounce = undefined;
+      if (generation === this.analysisGeneration) {
+        this.analyze();
+      }
+    }, ANALYSIS_DEBOUNCE_MS);
   }
 
   private analyze(): void {
@@ -274,19 +301,22 @@ export class App {
     if (!analysis.run_id) {
       return;
     }
+    const runId = analysis.run_id;
 
     const isFinished = (status: AnalyzePositionResponse['stockfish_status']): boolean =>
       status === 'generated' || status === 'fallback' || status === 'failed' || status === 'skipped';
     let stockfishDone = isFinished(analysis.stockfish_status);
-    let ragDone = isFinished(analysis.rag_status);
-    const maybeStartCoach = (): void => {
+    const maybeStartRequestedCoach = (): void => {
       if (
         generation === this.analysisGeneration &&
         stockfishDone &&
-        ragDone &&
-        (this.analysis()?.coach_status === 'pending' || this.analysis()?.coach_status === 'running')
+        this.coachRequested &&
+        this.coachRunId !== runId &&
+        this.analysis()?.coach_status !== 'generated' &&
+        this.analysis()?.coach_status !== 'fallback'
       ) {
-        this.startCoachStream(analysis.run_id!, generation, cacheKey);
+        this.coachRunId = runId;
+        this.startRequestedCoach(runId, generation, cacheKey, isFinished(analysis.rag_status));
       }
     };
 
@@ -304,7 +334,7 @@ export class App {
             stockfish_status: result.stockfish_status,
             fallbacks_used: result.fallbacks_used,
           });
-          maybeStartCoach();
+          maybeStartRequestedCoach();
         },
         error: () => {
           if (generation !== this.analysisGeneration) {
@@ -313,44 +343,51 @@ export class App {
           this.stockfishLoading.set(false);
           stockfishDone = true;
           this.mergeAnalysis(generation, cacheKey, { stockfish_status: 'failed' });
-          maybeStartCoach();
+          maybeStartRequestedCoach();
         },
       });
     } else {
       this.stockfishLoading.set(false);
     }
 
-    if (!ragDone) {
-      this.ragLoading.set(true);
-      this.ragSubscription = this.analysisService.fetchRagContext(analysis.run_id).subscribe({
-        next: (result) => {
-          if (generation !== this.analysisGeneration) {
-            return;
-          }
-          this.ragLoading.set(false);
-          ragDone = true;
-          this.mergeAnalysis(generation, cacheKey, {
-            rag_context: result.rag_context,
-            rag_status: result.rag_status,
-            fallbacks_used: result.fallbacks_used,
-          });
-          maybeStartCoach();
-        },
-        error: () => {
-          if (generation !== this.analysisGeneration) {
-            return;
-          }
-          this.ragLoading.set(false);
-          ragDone = true;
-          this.mergeAnalysis(generation, cacheKey, { rag_status: 'failed' });
-          maybeStartCoach();
-        },
-      });
-    } else {
-      this.ragLoading.set(false);
+    this.ragLoading.set(false);
+    maybeStartRequestedCoach();
+  }
+
+  private startRequestedCoach(
+    runId: string,
+    generation: number,
+    cacheKey: string,
+    ragDone: boolean,
+  ): void {
+    if (ragDone) {
+      this.startCoachStream(runId, generation, cacheKey);
+      return;
     }
 
-    maybeStartCoach();
+    this.ragLoading.set(true);
+    this.ragSubscription = this.analysisService.fetchRagContext(runId).subscribe({
+      next: (result) => {
+        if (generation !== this.analysisGeneration) {
+          return;
+        }
+        this.ragLoading.set(false);
+        this.mergeAnalysis(generation, cacheKey, {
+          rag_context: result.rag_context,
+          rag_status: result.rag_status,
+          fallbacks_used: result.fallbacks_used,
+        });
+        this.startCoachStream(runId, generation, cacheKey);
+      },
+      error: () => {
+        if (generation !== this.analysisGeneration) {
+          return;
+        }
+        this.ragLoading.set(false);
+        this.mergeAnalysis(generation, cacheKey, { rag_status: 'failed' });
+        this.startCoachStream(runId, generation, cacheKey);
+      },
+    });
   }
 
   private startCoachStream(runId: string, generation: number, cacheKey: string): void {
@@ -369,7 +406,7 @@ export class App {
           if (generation !== this.analysisGeneration) {
             return;
           }
-          if (result.coach_status === 'pending' || result.explanation === PENDING_COACH_TEXT) {
+          if (result.coach_status === 'pending') {
             this.markCoachUnavailable(generation, cacheKey);
             return;
           }
@@ -429,10 +466,15 @@ export class App {
 
   private cancelPendingWork(): void {
     this.analysisGeneration += 1;
+    if (this.analysisDebounce) {
+      clearTimeout(this.analysisDebounce);
+      this.analysisDebounce = undefined;
+    }
     this.explorerSubscription?.unsubscribe();
     this.stockfishSubscription?.unsubscribe();
     this.ragSubscription?.unsubscribe();
     this.coachEventSource?.close();
+    this.coachRunId = undefined;
     this.explorerSubscription = undefined;
     this.stockfishSubscription = undefined;
     this.ragSubscription = undefined;

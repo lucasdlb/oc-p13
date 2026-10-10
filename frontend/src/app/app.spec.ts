@@ -42,6 +42,7 @@ function analysisStub(sessionId: string): AnalyzePositionResponse {
 
 describe('App', () => {
   beforeEach(async () => {
+    vi.useFakeTimers();
     await TestBed.configureTestingModule({
       imports: [App],
       providers: [
@@ -57,6 +58,10 @@ describe('App', () => {
         },
       ],
     }).compileComponents();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('should create the app', () => {
@@ -78,6 +83,7 @@ describe('App', () => {
     const app = fixture.componentInstance;
     app.onMoveRequested({ from: 'e2', to: 'e4' });
     app.onMoveRequested({ from: 'e7', to: 'e5' });
+    vi.runAllTimers();
 
     expect(app.currentIndex()).toBe(2);
     expect(app.totalMoves()).toBe(2);
@@ -140,9 +146,8 @@ describe('App', () => {
     app.askQuestion('Que peuvent jouer les Noirs ?');
     app.askQuestion('Pourquoi ce coup est-il bon ?');
 
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(2);
     expect(requests.map((request) => request.question ?? null)).toEqual([
-      null,
       'Que peuvent jouer les Noirs ?',
       'Pourquoi ce coup est-il bon ?',
     ]);
@@ -160,6 +165,7 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
     app.onMoveRequested({ from: 'e2', to: 'e4' });
+    vi.runAllTimers();
     fixture.detectChanges();
 
     const input = fixture.nativeElement.querySelector('input[name="question"]') as HTMLInputElement;
@@ -175,6 +181,7 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
     app.onMoveRequested({ from: 'e2', to: 'e4' });
+    vi.runAllTimers();
 
     const input = document.createElement('input');
     document.body.appendChild(input);
@@ -189,6 +196,7 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
     app.onMoveRequested({ from: 'e2', to: 'e4' });
+    vi.runAllTimers();
 
     expect(app.sessionId()).toBe('session-1');
 
@@ -206,14 +214,16 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
     app.onMoveRequested({ from: 'e2', to: 'e4' });
+    vi.runAllTimers();
     app.onMoveRequested({ from: 'e7', to: 'e5' });
+    vi.runAllTimers();
     app.goBack();
 
     expect(app.analysis()).not.toBeNull();
     expect(app.analysis()!.session_id).toBe('session-1');
   });
 
-  it('keeps Explorer visible while Stockfish and RAG are still pending', () => {
+  it('keeps Explorer visible while Stockfish is still pending and defers retrieval', () => {
     const explorer = new Subject<AnalyzePositionResponse>();
     const stockfish = new Subject<StockfishRunResponse>();
     const rag = new Subject<RagContextResponse>();
@@ -225,6 +235,7 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
     app.onMoveRequested({ from: 'e2', to: 'e4' });
+    vi.runAllTimers();
     explorer.next({
       ...analysisStub('session-1'),
       coach_status: 'pending',
@@ -235,15 +246,27 @@ describe('App', () => {
     expect(app.analysis()?.opening.name).toBe("King's Pawn Game");
     expect(app.loading()).toBe(false);
     expect(app.stockfishLoading()).toBe(true);
-    expect(app.ragLoading()).toBe(true);
+    expect(app.ragLoading()).toBe(false);
+    expect(service.fetchRagContext).not.toHaveBeenCalled();
+  });
+
+  it('explains why Stockfish was skipped instead of reporting it unavailable', async () => {
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.onMoveRequested({ from: 'e2', to: 'e4' });
+    vi.runAllTimers();
+    fixture.detectChanges();
+
+    const card = [...fixture.nativeElement.querySelectorAll('.stockfish-card p')]
+      .at(-1) as HTMLElement;
+    expect(card.textContent).toContain('Pas d’appel moteur nécessaire');
   });
 
   it('replaces the coach placeholder when the SSE stream fails', () => {
     const service = TestBed.inject(AnalysisService);
     const pendingAnalysis = {
       ...analysisStub('session-1'),
-      coach_explanation:
-        "Le coach detaille est en cours de redaction. Les donnees de l'explorateur sont deja disponibles ci-contre.",
+      coach_explanation: '',
       coach_status: 'pending' as const,
     };
     let streamHandlers: { error: () => void } | undefined;
@@ -256,12 +279,56 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
     app.onMoveRequested({ from: 'e2', to: 'e4' });
+    vi.runAllTimers();
+    app.askQuestion('Pourquoi ce coup est-il bon ?');
 
     streamHandlers?.error();
 
     expect(app.analysis()?.coach_explanation).toBe('Explication indisponible pour cette position.');
     expect(app.analysis()?.coach_status).toBe('failed');
     expect(app.analysis()?.fallbacks_used).toContain('coach_stream_unavailable');
+  });
+
+  it('shows a neutral invitation before a coach explanation is requested', () => {
+    const service = TestBed.inject(AnalysisService);
+    vi.spyOn(service, 'analyzePosition').mockReturnValue(of({
+      ...analysisStub('session-1'),
+      coach_explanation: '',
+      coach_status: 'pending',
+    }));
+
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.onMoveRequested({ from: 'e2', to: 'e4' });
+    vi.runAllTimers();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.primary-note .state')?.textContent).toContain(
+      'Pose une question sur cette position ou demande une explication de la position.',
+    );
+    expect(fixture.nativeElement.textContent).not.toContain('Question active :');
+  });
+
+  it('starts a coach explanation without a question', () => {
+    const service = TestBed.inject(AnalysisService);
+    vi.spyOn(service, 'analyzePosition').mockReturnValue(of({
+      ...analysisStub('session-1'),
+      coach_explanation: '',
+      coach_status: 'pending',
+    }));
+    const streamCoach = vi.spyOn(service, 'streamCoach').mockReturnValue({ close: vi.fn() } as unknown as EventSource);
+
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.onMoveRequested({ from: 'e2', to: 'e4' });
+    vi.runAllTimers();
+    fixture.detectChanges();
+
+    const button = [...fixture.nativeElement.querySelectorAll('button')]
+      .find((candidate) => candidate.textContent?.includes('Analyser la position')) as HTMLButtonElement;
+    button.click();
+
+    expect(streamCoach).toHaveBeenCalledWith('run-1', expect.anything());
   });
 
   it('hides provisional coach references until the final SSE result', () => {
@@ -280,6 +347,8 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
     app.onMoveRequested({ from: 'e2', to: 'e4' });
+    vi.runAllTimers();
+    app.askQuestion('Pourquoi ce coup est-il bon ?');
 
     streamHandlers?.token('Jouez [[move:uci=e7e5,label=e5]] maintenant.');
 

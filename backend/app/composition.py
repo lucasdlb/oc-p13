@@ -14,6 +14,7 @@ from backend.app.core.settings import LLMSettings, Settings, get_settings
 from backend.app.services.coach import CoachService, LlmCoachService
 from backend.app.services.embeddings import OllamaEmbeddingProvider
 from backend.app.services.lichess import LichessExplorerClient
+from backend.app.services.youtube import YouTubeClient
 from backend.app.services.llm import OpenAICompatLLMProvider, OllamaLLMProvider
 from backend.app.services.milvus import MilvusStore
 from backend.app.services.mongo import MongoConnection
@@ -45,16 +46,20 @@ class RuntimeServices:
     opening_tree: OpeningTree | None
     intent_router: IntentRouter
     langgraph_enabled: bool
+    youtube_client: YouTubeClient | None = None
 
     def close(self) -> None:
         """Release network clients owned by the runtime services."""
-        for name, resource in (
+        resources = (
             ("lichess", self.lichess_client),
             ("llm", self.llm_provider),
             ("rag", self.rag_service),
             ("intent_router", self.intent_router),
             ("mongo", self.mongo),
-        ):
+        )
+        if self.youtube_client is not None:
+            resources = (*resources, ("youtube", self.youtube_client))
+        for name, resource in resources:
             try:
                 resource.close()
             except Exception as exc:  # noqa: BLE001 - close every resource
@@ -102,6 +107,11 @@ def default_stockfish_service() -> StockfishService:
 
 
 @lru_cache
+def default_youtube_client() -> YouTubeClient:
+    return YouTubeClient(get_settings().youtube)
+
+
+@lru_cache
 def default_opening_tree() -> OpeningTree | None:
     return build_opening_tree()
 
@@ -143,6 +153,7 @@ def build_runtime_services(settings: Settings) -> RuntimeServices:
     database = mongo.database()
     return RuntimeServices(
         lichess_client=LichessExplorerClient(settings.lichess),
+        youtube_client=YouTubeClient(settings.youtube),
         llm_provider=llm_provider,
         coach_service=LlmCoachService(provider=llm_provider),
         rag_service=build_rag_service(settings),

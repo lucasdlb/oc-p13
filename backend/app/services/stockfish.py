@@ -1,3 +1,4 @@
+import os
 import re
 import selectors
 import shutil
@@ -49,15 +50,18 @@ class StockfishService:
     def __init__(self, settings: StockfishSettings) -> None:
         self.settings = settings
 
-    def evaluate(self, fen: str, *, multipv: int = 1) -> dict[str, Any]:
+    def evaluate(self, fen: str, *, multipv: int = 1, depth: int | None = None) -> dict[str, Any]:
         board = chess.Board(fen)
+        search_depth = depth or self.settings.depth
         command = "\n".join(
             [
                 "uci",
+                f"setoption name Threads value {self.settings.threads}",
+                f"setoption name Hash value {self.settings.hash_mb}",
                 f"setoption name MultiPV value {multipv}",
                 "isready",
                 f"position fen {fen}",
-                f"go depth {self.settings.depth}",
+                f"go depth {search_depth}",
             ]
         ) + "\n"
 
@@ -70,9 +74,9 @@ class StockfishService:
                 text=True,
             )
         except FileNotFoundError:
-            return {"status": "unavailable", "reason": "binary_not_found"}
+            return {"status": "unavailable", "reason": "binary_not_found", "depth": search_depth}
         except OSError:
-            return {"status": "unavailable", "reason": "process_error"}
+            return {"status": "unavailable", "reason": "process_error", "depth": search_depth}
 
         assert process.stdin is not None
         assert process.stdout is not None
@@ -88,16 +92,19 @@ class StockfishService:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     process.kill()
-                    return {"status": "unavailable", "reason": "timeout"}
+                    return {"status": "unavailable", "reason": "timeout", "depth": search_depth}
                 if not selector.select(remaining):
                     process.kill()
-                    return {"status": "unavailable", "reason": "timeout"}
+                    return {"status": "unavailable", "reason": "timeout", "depth": search_depth}
 
-                line = process.stdout.readline()
-                if not line:
+                # Read the raw file descriptor. TextIOWrapper may have already
+                # buffered several UCI lines, making select() report no data
+                # while readline() still has a complete bestmove available.
+                chunk = os.read(process.stdout.fileno(), 4096)
+                if not chunk:
                     break
-                output.append(line)
-                if line.startswith("bestmove "):
+                output.append(chunk.decode("utf-8", errors="replace"))
+                if any(line.startswith("bestmove ") for line in "".join(output).splitlines()):
                     try:
                         process.stdin.write("quit\n")
                         process.stdin.flush()
@@ -108,15 +115,15 @@ class StockfishService:
         except subprocess.TimeoutExpired:
             process.kill()
             process.communicate()
-            return {"status": "unavailable", "reason": "timeout"}
+            return {"status": "unavailable", "reason": "timeout", "depth": search_depth}
         finally:
             selector.close()
             if process.poll() is None:
                 process.kill()
                 process.communicate()
 
-        result = _parse_uci_output("".join(output), self.settings.depth, board.turn, multipv)
-        return result or {"status": "unavailable", "reason": "invalid_uci_output"}
+        result = _parse_uci_output("".join(output), search_depth, board.turn, multipv)
+        return result or {"status": "unavailable", "reason": "invalid_uci_output", "depth": search_depth}
 
 
 def _parse_uci_output(output: str, depth: int, side_to_move: bool = chess.WHITE, multipv: int = 1) -> dict[str, Any] | None:

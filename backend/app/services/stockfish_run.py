@@ -1,6 +1,7 @@
 """Idempotent Stockfish analysis for a persisted analysis run."""
 
 import time
+import threading
 from typing import Any
 
 from backend.app.core.settings import StockfishSettings
@@ -8,6 +9,17 @@ from backend.app.models.analysis import AnalysisSnapshot, RecommendedMove, Stock
 from backend.app.services.cache_store import CacheStore, stockfish_cache_key
 from backend.app.services.run_store import RunStore
 from backend.app.services.stockfish import StockfishService, engine_version
+
+
+class _StockfishFlight:
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.result: dict | None = None
+        self.error: BaseException | None = None
+
+
+_FLIGHTS: dict[str, _StockfishFlight] = {}
+_FLIGHTS_LOCK = threading.Lock()
 
 
 class StockfishRunService:
@@ -29,12 +41,20 @@ class StockfishRunService:
 
         if not run_store.claim_family(run_id, "stockfish"):
             current = _wait_for_stockfish(run_store, run_id) or _require_run(run_store, run_id)
+            if current.stockfish_status == "running":
+                # A worker may have disappeared after claiming the family. Do not
+                # leave the UI in a permanent pending/running state.
+                result = {"status": "unavailable", "reason": "stale_run", "depth": self._settings.depth_for_level(run.level)}
+                fallbacks = ["stockfish_unavailable"]
+                run_store.save_stockfish_result(run_id, result, "fallback", fallbacks)
+                current = _require_run(run_store, run_id)
             return _response(current.stockfish_result, current.stockfish_status, current.stockfish_fallbacks)
 
         facts = AnalysisSnapshot.model_validate(run.explorer_facts or {})
         recommended_moves = [RecommendedMove.model_validate(move) for move in facts.recommended_moves]
         cache_status = dict(facts.cache)
         fallbacks: list[str] = []
+        depth = self._settings.depth_for_level(run.level)
         try:
             requires_stockfish = (run.coach_context_artifact or {}).get("intent") == "compare_moves"
             result = _run_if_needed(
@@ -45,13 +65,13 @@ class StockfishRunService:
                 recommended_moves,
                 facts.opening.matched,
                 cache_status,
-                depth=self._settings.depth,
+                depth=depth,
                 binary=self._settings.binary,
                 force=requires_stockfish,
                 multipv=3 if requires_stockfish else 1,
             )
         except Exception:  # noqa: BLE001 - an unavailable engine is a safe fallback
-            result = {"status": "unavailable"}
+            result = {"status": "unavailable", "reason": "process_error", "depth": depth}
 
         if result is None:
             status = "skipped"
@@ -104,21 +124,39 @@ def _run_if_needed(
     force: bool = False,
     multipv: int = 1,
 ) -> dict | None:
-    has_relevant_move = any(move.relevant for move in recommended_moves)
-    if not force and local_opening_matched and recommended_moves and not confidence["low_confidence"] and has_relevant_move:
-        cache_status["stockfish"] = "skipped"
-        return None
-    if force or confidence["low_confidence"] or not has_relevant_move:
-        key = stockfish_cache_key(fen, depth, engine_version(binary), multipv)
-        if cache_store.available():
-            cached = cache_store.get_stockfish(key)
-            if isinstance(cached, dict) and cached.get("status") == "ok":
-                cache_status["stockfish"] = "hit"
-                return cached
-        result = stockfish_service.evaluate(fen, multipv=multipv)
+    key = stockfish_cache_key(fen, depth, engine_version(binary), multipv)
+    if cache_store.available():
+        cached = cache_store.get_stockfish(key)
+        if isinstance(cached, dict) and cached.get("status") == "ok":
+            cache_status["stockfish"] = "hit"
+            return cached
+
+    with _FLIGHTS_LOCK:
+        flight = _FLIGHTS.get(key)
+        owner = flight is None
+        if owner:
+            flight = _StockfishFlight()
+            _FLIGHTS[key] = flight
+
+    if not owner:
+        flight.done.wait()
+        if flight.error is not None:
+            raise flight.error
+        cache_status["stockfish"] = "shared"
+        return flight.result
+
+    try:
+        result = stockfish_service.evaluate(fen, multipv=multipv, depth=depth)
         cache_status["stockfish"] = "miss" if cache_store.available() else "skipped"
         if isinstance(result, dict) and result.get("status") == "ok" and cache_store.available():
             cache_store.set_stockfish(key, result)
+        flight.result = result
         return result
-    cache_status["stockfish"] = "skipped"
-    return None
+    except BaseException as exc:
+        flight.error = exc
+        raise
+    finally:
+        flight.done.set()
+        with _FLIGHTS_LOCK:
+            if _FLIGHTS.get(key) is flight:
+                del _FLIGHTS[key]

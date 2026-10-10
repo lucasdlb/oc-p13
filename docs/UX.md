@@ -16,6 +16,7 @@ AppComponent
 +-- AnalysisPanelComponent
     +-- CoachMarkdownComponent
     +-- Ouverture, explication, question et contexte pedagogique
+    +-- Bouton d'analyse de position sans question
     +-- Videos et fallbacks
     +-- Explorer Lichess/Masters, coups, statistiques et Stockfish
 ```
@@ -28,9 +29,9 @@ Les blocs ouverture, coups recommandes, statistiques, Stockfish et videos ne son
 2. L'utilisateur joue un coup legal sur l'echiquier, ou demande un coup ou une ligne depuis le coach ou l'Explorer.
 3. Le frontend met a jour la position FEN, le PGN, l'historique et les coups legaux. Le champ `moves` de la requete utilise les coups LAN produits par `chess.js`.
 4. Le frontend appelle `POST /api/analyze-position`.
-5. L'interface affiche un etat de chargement lisible, puis complete progressivement l'analyse avec le contexte RAG, Stockfish et le flux du coach lorsque ces briques sont demandees.
+5. L'interface affiche un etat de chargement lisible, puis complete progressivement l'analyse avec les ressources YouTube, le contexte RAG, Stockfish et le flux du coach lorsque ces briques sont demandees. Le bouton « Analyser la position » lance une explication generale sans question precise ; le champ de question reste disponible pour une demande ciblee.
 6. L'analyse affiche l'ECO et le nom de l'ouverture, l'explication, les coups recommandes, les statistiques Lichess, les coups et statistiques Masters lorsqu'ils sont disponibles, Stockfish et le contexte pedagogique source.
-7. Les videos ne sont affichees que si le backend en retourne. Les fallbacks utilises sont affiches lorsqu'il y en a.
+7. Les videos retournees par l'Explorer sont affichees avec leur miniature, chaine et duree lorsqu'elles sont disponibles. Un lien de recherche YouTube est affiche en fallback si la cle, le quota ou le service ne sont pas disponibles.
 8. Le niveau pedagogique initialise une plage de niveau Lichess ; l'utilisateur peut ajuster les bornes min/max pour filtrer les statistiques pratiques. Toute modification relance l'analyse de la position courante.
 
 ## Layout desktop

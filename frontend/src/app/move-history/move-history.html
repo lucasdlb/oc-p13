@@ -9,6 +9,8 @@
         type="button"
         class="nav-button"
         aria-label="Position precedente"
+        aria-keyshortcuts="ArrowLeft"
+        title="Position précédente (flèche gauche)"
         [disabled]="currentIndex() === 0"
         (click)="goBack.emit()"
       >
@@ -19,10 +21,15 @@
         type="button"
         class="nav-button"
         aria-label="Position suivante"
+        aria-keyshortcuts="ArrowRight"
+        title="Position suivante (flèche droite)"
         [disabled]="currentIndex() >= totalMoves()"
         (click)="goForward.emit()"
       >
         &#8594;
+      </button>
+      <button type="button" class="copy-button" (click)="copyPgn()" [attr.aria-label]="'Copier le PGN ' + (pgn() || 'Position initiale')">
+        {{ copied() ? 'Copié' : 'Copier PGN' }}
       </button>
     </div>
   </div>
@@ -37,17 +44,4 @@
     <p class="empty">Joue un coup ou lance la demo 1. e4.</p>
   }
 
-  <dl>
-    <div>
-      <dt>PGN</dt>
-      <dd>{{ pgn() || 'Position initiale' }}</dd>
-    </div>
-  </dl>
-
-  <details class="fen-details">
-    <summary>FEN de la position</summary>
-    <p>{{ fen() }}</p>
-  </details>
-
-  <p class="keyboard-hint">Fleches gauche et droite du clavier pour naviguer.</p>
 </section>

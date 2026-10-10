@@ -283,7 +283,7 @@ def test_llm_coach_prompt_includes_recommended_moves_and_structure() -> None:
 
     prompt = provider.prompts[0]
     system = provider.systems[0]
-    assert "e5 (e7e5)" in prompt
+    assert "| e5 | e7e5 |" in prompt
     assert "Question de l'utilisateur :" in prompt
     assert "Pourquoi jouer Nf3 ici ?" in prompt
     assert prompt.startswith("QUESTION DE L'UTILISATEUR A TRAITER EN PRIORITE :\nPourquoi jouer Nf3 ici ?")

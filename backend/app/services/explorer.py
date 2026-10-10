@@ -4,8 +4,6 @@ The Explorer owns opening matching, Lichess/Masters lookups, caching and the
 fast snapshot returned before RAG, Stockfish and coach synthesis run.
 """
 
-from urllib.parse import quote_plus
-
 from pydantic import ValidationError
 
 from backend.app.core.settings import RecommendationSettings
@@ -13,6 +11,7 @@ from backend.app.models.analysis import AnalysisSnapshot, AnalyzePositionRequest
 from backend.app.services.cache_store import CacheStore, lichess_cache_key, masters_cache_key
 from backend.app.services.lichess import LichessExplorerClient, LichessExplorerResult
 from backend.app.services.opening_book import DEMO_OPENING_SOURCE, match_opening
+from backend.app.services.youtube import YouTubeClient, search_videos
 
 
 class ExplorerService:
@@ -26,6 +25,7 @@ class ExplorerService:
         request: AnalyzePositionRequest,
         lichess_client: LichessExplorerClient,
         cache_store: CacheStore,
+        youtube_client: YouTubeClient | None = None,
     ) -> AnalysisSnapshot:
         local_match = match_opening(request.moves, request.fen)
         ratings = rating_buckets(request, self._settings)
@@ -64,16 +64,16 @@ class ExplorerService:
             fallbacks_used.append(lichess_result.fallback)
         if masters_result.fallback:
             fallbacks_used.append(masters_result.fallback)
-        fallbacks_used.append("youtube_search_fallback")
-
-        query = quote_plus(f"{opening.name} chess opening {request.level}")
-        videos = [
-            Video(
-                title=f"Recherche YouTube: {opening.name} {request.level}",
-                url=f"https://www.youtube.com/results?search_query={query}",
-                source="youtube-search-fallback",
+        if youtube_client is not None and opening.matched:
+            videos, video_fallbacks, video_cache = search_videos(
+                opening.name, request.level, youtube_client, cache_store
             )
-        ]
+            fallbacks_used.extend(video_fallbacks)
+            cache_status["videos"] = video_cache
+        else:
+            videos, video_fallbacks = _video_fallback(opening.name, request.level)
+            fallbacks_used.extend(video_fallbacks)
+            cache_status["videos"] = "skipped"
         return AnalysisSnapshot(
             opening=opening,
             recommended_moves=recommended_moves,
@@ -105,6 +105,19 @@ def rating_buckets(request: AnalyzePositionRequest, settings: RecommendationSett
     if minimum == maximum:
         return [minimum] if minimum in buckets else []
     return [bucket for bucket in buckets if minimum <= bucket < maximum]
+
+
+def _video_fallback(opening: str, level: str) -> tuple[list[Video], list[str]]:
+    from urllib.parse import quote_plus
+
+    query = f"{opening} chess opening tutorial explanation {level}"
+    return [
+        Video(
+            title=f"Recherche YouTube: {opening} {level}",
+            url=f"https://www.youtube.com/results?search_query={quote_plus(query)}",
+            source="youtube-search-fallback",
+        )
+    ], ["youtube_search_fallback"]
 
 
 def _fetch_lichess(

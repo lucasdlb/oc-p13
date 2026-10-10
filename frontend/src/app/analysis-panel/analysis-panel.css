@@ -1,11 +1,10 @@
 .analysis-card {
-  align-content: start;
   display: grid;
   gap: 10px;
-  grid-template-rows: auto auto;
+  grid-template-rows: minmax(300px, 0.95fr) auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   padding-right: 2px;
 }
 
@@ -18,10 +17,88 @@
   background: #211f1c;
   color: #f4efe7;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 14px;
   box-shadow: 0 24px 90px rgba(0, 0, 0, 0.34);
   min-width: 0;
+}
+
+.coach-column {
+  grid-row: 1;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+}
+
+.empty-coach {
+  align-content: start;
+  grid-template-rows: auto 1fr;
+}
+
+.analysis-card:has(.empty-coach) {
+  grid-template-rows: minmax(160px, auto) auto minmax(0, 1fr);
+}
+
+.coach-scroll,
+.tab-panel {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: rgba(255, 106, 0, 0.5) transparent;
+}
+
+.tab-panel {
+  grid-row: 3;
+  align-content: stretch;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.analysis-tabs {
+  display: flex;
+  gap: 6px;
+  grid-row: 2;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.analysis-tabs button {
+  align-items: center;
+  background: rgba(255, 239, 224, 0.08);
+  border: 1px solid transparent;
+  border-radius: 9px 9px 0 0;
+  color: #b8afa4;
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 900;
+  gap: 6px;
+  padding: 9px 13px;
+}
+
+.analysis-tabs button.active {
+  background: #211f1c;
+  border-color: rgba(255, 239, 224, 0.12);
+  border-bottom-color: #211f1c;
+  color: #fffaf2;
+}
+
+.analysis-tabs button span {
+  border-radius: 999px;
+  background: rgba(255, 106, 0, 0.18);
+  color: #ffb273;
+  font-size: 0.65rem;
+  padding: 2px 6px;
+}
+
+.analysis-tabs button.empty {
+  color: #746d65;
+}
+
+.analysis-tabs button.empty span {
+  background: rgba(255, 239, 224, 0.08);
+  color: #746d65;
 }
 
 .muted-panel {
@@ -57,13 +134,6 @@ article {
   gap: 8px;
 }
 
-.compact-heading {
-  align-items: start;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: 1fr auto;
-}
-
 .opening-heading {
   align-items: center;
   display: grid;
@@ -89,8 +159,7 @@ article {
   padding: 5px 7px;
 }
 
-.opening-summary span,
-.opening-summary small {
+.opening-summary span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -99,11 +168,6 @@ article {
 .opening-summary span {
   font-size: 0.78rem;
   font-weight: 800;
-}
-
-.fallbacks {
-  display: grid;
-  gap: 8px;
 }
 
 .demo-guide {
@@ -117,45 +181,11 @@ article {
   line-height: 1.3;
 }
 
-.context-disclosure {
-  display: grid;
-  gap: 8px;
-}
-
-.context-disclosure summary {
-  align-items: center;
-  color: #f4efe7;
-  cursor: pointer;
-  display: flex;
-  font-size: 0.9rem;
-  font-weight: 800;
-  justify-content: space-between;
-  list-style: none;
-}
-
-.context-disclosure summary::-webkit-details-marker {
-  display: none;
-}
-
-.context-disclosure summary::after {
-  color: #a8a29a;
-  content: '+';
-  font-size: 1rem;
-}
-
-.context-disclosure[open] summary::after {
-  content: '\2212';
-}
-
-.context-disclosure summary small {
-  margin-left: auto;
-  margin-right: 10px;
-}
-
 .explorer-tabs {
-  display: grid;
+  display: flex;
+  flex: 1 1 auto;
   gap: 8px;
-  grid-template-columns: 1fr 1fr;
+  min-width: 180px;
 }
 
 .explorer-tabs button {
@@ -168,6 +198,26 @@ article {
   font-size: 0.78rem;
   font-weight: 900;
   padding: 8px 10px;
+  flex: 1 1 0;
+}
+
+.explorer-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+
+.explorer-source {
+  display: grid;
+  gap: 3px;
+  min-width: max-content;
+}
+
+.source-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
 }
 
 .explorer-tabs button.active {
@@ -175,7 +225,6 @@ article {
   color: #1b130d;
 }
 
-.fallbacks span,
 .state {
   border-radius: 12px;
   background: #2d2925;
@@ -187,11 +236,38 @@ article {
   padding-top: 10px;
 }
 
+.coach-title {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+}
+
+.coach-title span {
+  color: #ff6a00;
+  font-size: inherit;
+  font-weight: 900;
+}
+
+.coach-title span + span {
+  color: #f4efe7;
+}
+
 .question-form {
   display: grid;
   gap: 7px;
   border-top: 1px solid rgba(255, 239, 224, 0.12);
   padding-top: 10px;
+  position: relative;
+}
+
+.sr-only {
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .question-form label {
@@ -240,8 +316,18 @@ article {
   opacity: 0.5;
 }
 
-.active-question {
-  line-height: 1.35;
+.explanation-submit {
+  border: 1px solid rgba(255, 106, 0, 0.55);
+  border-radius: 10px;
+  background: transparent;
+  color: #ffd2ad;
+  font-size: 0.76rem;
+  padding: 8px 12px;
+}
+
+.explanation-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .moves-table {
@@ -250,29 +336,34 @@ article {
   overflow: hidden;
 }
 
+.moves-scroll,
+.context-list,
+.video-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: rgba(255, 106, 0, 0.75) rgba(255, 239, 224, 0.08);
+  scrollbar-width: thin;
+}
+
+.stats-footer {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
 .lichess-filter {
   display: grid;
   gap: 8px;
   grid-template-columns: minmax(0, 1fr) auto;
+  margin-left: auto;
   padding: 0;
 }
 
-.filter-heading {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.lichess-filter p {
-  color: #a8a29a;
-  font-size: 0.68rem;
-  line-height: 1.25;
-}
-
-.filter-controls {
-  align-items: end;
-  display: flex;
-  gap: 6px;
+.lichess-filter > strong {
+  align-self: center;
+  color: #ffd2ad;
+  font-size: 0.76rem;
 }
 
 .lichess-filter label {
@@ -286,9 +377,9 @@ article {
   white-space: nowrap;
 }
 
-.filter-controls label {
-  gap: 2px;
-  white-space: nowrap;
+.filter-controls {
+  display: flex;
+  gap: 6px;
 }
 
 .lichess-filter select {
@@ -327,10 +418,19 @@ article {
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .move-row:nth-child(odd) {
   background: rgba(255, 239, 224, 0.035);
+}
+
+.move-row:hover,
+.move-row:focus-visible {
+  background: rgba(255, 106, 0, 0.1);
+  outline: none;
 }
 
 .move-name,
@@ -341,13 +441,58 @@ article {
   gap: 4px;
 }
 
+.stats-card {
+  align-items: center;
+  border-top: 1px solid rgba(255, 239, 224, 0.1);
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 3px 8px;
+  padding-top: 5px;
+}
+
+.stats-card h3,
+.stockfish-card h3 {
+  font-size: 0.76rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-card .result-bar {
+  grid-column: 2;
+  height: 7px;
+}
+
+.stats-card .stats-legend {
+  display: flex;
+  font-size: 0.62rem;
+  grid-column: 2;
+  justify-content: space-between;
+  line-height: 1;
+}
+
+.stockfish-card {
+  align-items: center;
+  border-top: 1px solid rgba(255, 239, 224, 0.1);
+  display: flex;
+  gap: 8px;
+  padding-top: 5px;
+}
+
+.stockfish-card p {
+  border-radius: 999px;
+  background: rgba(255, 106, 0, 0.12);
+  color: #ffd2ad;
+  font-size: 0.76rem;
+  font-weight: 800;
+  overflow: hidden;
+  padding: 4px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .move-name,
 .result-cell {
   min-width: 0;
-}
-
-.move-name small {
-  overflow-wrap: anywhere;
 }
 
 .move-games,
@@ -355,10 +500,6 @@ article {
   color: #a8a29a;
   font-size: 0.66rem;
   font-weight: 700;
-}
-
-.move-games {
-  text-align: left;
 }
 
 .move-name strong {
@@ -388,18 +529,6 @@ article {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-}
-
-.white-label {
-  text-align: left;
-}
-
-.draw-label {
-  text-align: center;
-}
-
-.black-label {
-  text-align: right;
 }
 
 .result-bar {
@@ -449,16 +578,41 @@ a {
     gap: 16px;
   }
 
-  .analysis-card {
-    overflow: visible;
-    padding-right: 0;
-  }
+  .analysis-card { overflow: visible; padding-right: 0; }
 
   .coach-column,
   .explorer-column {
     grid-column: auto;
-    overflow: visible;
+    overflow: hidden;
     height: auto;
+  }
+}
+
+@media (max-width: 1100px) {
+  :host,
+  .analysis-card {
+    height: auto;
+    min-height: 0;
+  }
+
+  .analysis-card {
+    grid-template-rows: auto auto minmax(360px, auto);
+  }
+
+  .coach-column {
+    max-height: 48rem;
+  }
+
+  .coach-scroll,
+  .tab-panel {
+    overflow: visible;
+  }
+
+}
+
+@media (max-height: 700px) and (min-width: 1101px) {
+  .analysis-card {
+    grid-template-rows: minmax(220px, 0.9fr) auto minmax(0, 1fr);
   }
 }
 
@@ -475,6 +629,10 @@ a {
     overflow: visible;
   }
 
+  .coach-column {
+    max-height: none;
+  }
+
   .opening-heading {
     align-items: start;
     grid-template-columns: 1fr;
@@ -487,6 +645,18 @@ a {
 
   .lichess-filter {
     grid-template-columns: 1fr;
+  }
+
+  .explorer-toolbar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .explorer-source,
+  .explorer-tabs,
+  .lichess-filter {
+    flex: 1 1 100%;
+    margin-left: 0;
   }
 
   .filter-controls {

@@ -49,14 +49,10 @@ from backend.app.services.run_store import RunStore, new_run_id, now_iso as run_
 from backend.app.services.session_store import SessionStore, build_move_docs
 from backend.app.services.stockfish import StockfishService
 from backend.app.services.stockfish_run import StockfishRunService
+from backend.app.services.youtube import YouTubeClient
 
 
 RATING_BUCKETS = (0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500)
-
-PENDING_COACH_TEXT = (
-    "Le coach detaille est en cours de redaction. "
-    "Les donnees de l'explorateur sont deja disponibles ci-contre."
-)
 
 _EXPLORER_LOCK = threading.Lock()
 
@@ -69,6 +65,7 @@ def build_explorer_snapshot(
     request: AnalyzePositionRequest,
     lichess_client: LichessExplorerClient,
     cache_store: CacheStore,
+    youtube_client: YouTubeClient | None = None,
     **_unused: object,
 ) -> AnalysisSnapshot:
     """Produce the fast Explorer facts without invoking slower families."""
@@ -76,6 +73,7 @@ def build_explorer_snapshot(
         request,
         lichess_client,
         cache_store,
+        youtube_client=youtube_client,
     )
 
 
@@ -87,6 +85,7 @@ def build_analysis_snapshot(
     opening_tree: OpeningTree | None = None,
     intent_router: IntentRouter | None = None,
     rag_service: RagService | None = None,
+    youtube_client: YouTubeClient | None = None,
 ) -> AnalysisSnapshot:
     """Compatibility wrapper for callers migrating to the Explorer seam."""
     return build_explorer_snapshot(
@@ -97,6 +96,7 @@ def build_analysis_snapshot(
         opening_tree=opening_tree,
         intent_router=intent_router,
         rag_service=rag_service,
+        youtube_client=youtube_client,
     )
 
 
@@ -111,6 +111,7 @@ def analyze_position(
     rag_service: RagService | None = None,
     coach_service: CoachService | None = None,
     run_store: RunStore | None = None,
+    youtube_client: YouTubeClient | None = None,
 ) -> AnalyzePositionResponse:
     """Return Explorer facts immediately and persist a progressive run."""
     all_settings = get_settings()
@@ -174,6 +175,7 @@ def analyze_position(
         opening_tree=opening_tree,
         intent_router=intent_router,
         rag_service=rag_service,
+        youtube_client=youtube_client,
     )
     fallbacks_used = [*session_fallbacks, *snapshot.fallbacks_used]
     if fallbacks_used != snapshot.fallbacks_used:
@@ -217,7 +219,11 @@ def _explorer_response(
 ) -> AnalyzePositionResponse:
     statuses = {
         "explorer_status": getattr(run, "explorer_status", "generated"),
-        "stockfish_status": getattr(run, "stockfish_status", "pending"),
+        "stockfish_status": (
+            "pending"
+            if getattr(run, "stockfish_status", "pending") == "skipped"
+            else getattr(run, "stockfish_status", "pending")
+        ),
         "rag_status": getattr(run, "rag_status", "pending"),
         "coach_status": getattr(run, "coach_status", "pending"),
     }
@@ -234,9 +240,9 @@ def _explorer_response(
         else snapshot.rag_context
     )
     coach_explanation = (
-        coach_result.get("explanation", PENDING_COACH_TEXT)
+        coach_result.get("explanation", "")
         if isinstance(coach_result, dict)
-        else PENDING_COACH_TEXT
+        else ""
     )
     return AnalyzePositionResponse(
         opening=snapshot.opening,
@@ -429,7 +435,7 @@ def render_run_coach(
     run = _require_run(run_store, run_id)
     if run.coach_status in {"generated", "fallback"} and run.coach_result:
         return CoachExplanationResponse(
-            explanation=run.coach_result.get("explanation", PENDING_COACH_TEXT),
+            explanation=run.coach_result.get("explanation", ""),
             coach_status=run.coach_status,
             fallbacks_used=list(run.coach_result.get("fallbacks_used", [])),
         )
@@ -438,7 +444,7 @@ def render_run_coach(
         current = _wait_for_family(run_store, run_id, "coach") or _require_run(run_store, run_id)
         result = current.coach_result or {}
         return CoachExplanationResponse(
-            explanation=result.get("explanation", PENDING_COACH_TEXT),
+            explanation=result.get("explanation", ""),
             coach_status=current.coach_status,
             fallbacks_used=list(result.get("fallbacks_used", [])),
         )

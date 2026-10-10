@@ -12,7 +12,7 @@ remplace ni `OpeningTree` pour la structure des ouvertures ni Milvus pour la pro
 | `openings` | matching runtime des ouvertures structurees | cible; seed local actuel |
 | `lichess_cache` | Explorer et Masters, avec prefixe de cle | utilisee |
 | `stockfish_cache` | evaluations reussies | utilisee |
-| `videos_cache` | YouTube ou lien de recherche | reservee/fallback |
+| `videos_cache` | resultats YouTube enrichis par requete normalisee | utilisee |
 | `source_registry` | registre persistant des sources | a venir |
 
 ## Sessions
@@ -24,8 +24,8 @@ variation abandonnee. Si MongoDB est indisponible, l'analyse continue sans persi
 
 ## Analysis Runs
 
-`analysis_runs` stocke une analyse progressive: Explorer d'abord, puis Stockfish, RAG et coach dans
-des mises a jour atomiques par famille. Les endpoints sont idempotents et relisent un resultat deja
+`analysis_runs` stocke une analyse progressive: Explorer (incluant les ressources YouTube), puis
+Stockfish, RAG et coach dans des mises a jour atomiques par famille. Les endpoints sont idempotents et relisent un resultat deja
 `generated`, `fallback` ou `skipped`.
 
 ## Caches

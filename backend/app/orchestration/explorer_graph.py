@@ -21,6 +21,7 @@ from backend.app.services.run_store import RunStore
 from backend.app.services.session_store import SessionStore
 from backend.app.services.stockfish import StockfishService
 from backend.app.services.intent_router import IntentRouter
+from backend.app.services.youtube import YouTubeClient
 
 
 class ExplorerGraphState(TypedDict):
@@ -41,6 +42,7 @@ class ExplorerGraphDependencies:
     rag_service: RagService | None
     coach_service: CoachService | None
     run_store: RunStore
+    youtube_client: YouTubeClient | None = None
 
 
 def build_explorer_graph(dependencies: ExplorerGraphDependencies):
@@ -58,6 +60,7 @@ def build_explorer_graph(dependencies: ExplorerGraphDependencies):
             dependencies.rag_service,
             dependencies.coach_service,
             dependencies.run_store,
+            youtube_client=dependencies.youtube_client,
         )
         return {"response": response}
 

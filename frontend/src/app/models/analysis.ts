@@ -60,6 +60,12 @@ export interface Video {
   title: string;
   url: string;
   source: string;
+  channel_title?: string | null;
+  thumbnail_url?: string | null;
+  published_at?: string | null;
+  description?: string | null;
+  duration_seconds?: number | null;
+  view_count?: number | null;
 }
 
 export type FamilyStatus = 'pending' | 'running' | 'generated' | 'fallback' | 'failed' | 'skipped';

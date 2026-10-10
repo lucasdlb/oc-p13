@@ -50,6 +50,7 @@ _INTENT_DESCRIPTIONS: dict[RetrievalIntent, str] = {
     "general_principle": "Ask for a general chess principle.",
     "unclear": "The user's intent is unclear.",
 }
+assert set(_ROUTABLE_INTENTS) <= set(_INTENT_DESCRIPTIONS)
 
 
 class IntentRouterError(RuntimeError):
@@ -114,41 +115,27 @@ class IntentRouter:
             decision = self._primary.classify(context)
             _validate_decision(decision)
         except IntentRouterError:
-            logger.exception("Intent classifier provider failed")
-            decision = _with_source(
-                self._fallback.classify(context),
-                "fallback_after_provider_error",
-                "primary_provider_error",
-            )
-            _log_decision(decision, context)
-            return decision
+            logger.warning("Intent classifier provider failed")
+            return self._fallback_decision(context, "fallback_after_provider_error", "primary_provider_error")
         except (TypeError, ValueError):
-            logger.exception("Intent classifier returned an invalid response")
-            decision = _with_source(
-                self._fallback.classify(context),
-                "fallback_after_invalid_response",
-                "primary_invalid_response",
-            )
-            _log_decision(decision, context)
-            return decision
+            logger.warning("Intent classifier returned an invalid response")
+            return self._fallback_decision(context, "fallback_after_invalid_response", "primary_invalid_response")
         except Exception:
             logger.exception("Intent classifier crashed unexpectedly")
-            decision = _with_source(
-                self._fallback.classify(context),
-                "fallback_after_provider_error",
-                "primary_unexpected_error",
-            )
-            _log_decision(decision, context)
-            return decision
+            return self._fallback_decision(context, "fallback_after_provider_error", "primary_unexpected_error")
 
         if decision.confidence < self._medium_confidence:
-            decision = _with_source(
-                self._fallback.classify(context),
-                "fallback_after_low_confidence",
-                "primary_low_confidence",
-            )
-            _log_decision(decision, context)
-            return decision
+            return self._fallback_decision(context, "fallback_after_low_confidence", "primary_low_confidence")
+        _log_decision(decision, context)
+        return decision
+
+    def _fallback_decision(
+        self,
+        context: IntentRouterContext,
+        source: RouterSource,
+        reason: str,
+    ) -> IntentDecision:
+        decision = _with_source(self._fallback.classify(context), source, reason)
         _log_decision(decision, context)
         return decision
 
@@ -172,64 +159,69 @@ def _rx(alts: str) -> re.Pattern[str]:
 
 _RULES: tuple[Rule, ...] = (
     Rule("ask_history", _rx(r"histoire|historique|origine|vient d ?ou|d ?ou vient"), 0.80, "history_phrase"),
-    Rule("ask_trap", _rx(r"pieges?|trappes?|tactique cachee|combinaison cachee"), 0.82, "trap_phrase"),
     Rule("ask_mistake", _rx(r"erreurs? classiques?|gaffes?|mauvais coups? a eviter|pieges? a eviter"), 0.80, "mistake_phrase"),
+    Rule("ask_trap", _rx(r"pieges?|trappes?|tactique cachee|combinaison cachee"), 0.82, "trap_phrase"),
     Rule(
         "compare_moves",
-        _rx(r"le plus (?:agressif|solide|sur|fort|joue)|la plus (?:agressive|solide|sure|forte|jouee)|meilleurs?|plus agressif|plus solide|plus sur|plus fort"),
+        _rx(r"(?:le|la|les) (?:plus|moins) [a-z]+|meilleurs?|pire|mieux"),
         0.78,
         "comparison_phrase",
     ),
     Rule("ask_next_moves", _rx(r"que jouer|quoi jouer|je fais quoi|quel coup|prochains? coups?|coups? suivants?|peuvent jouer|peut faire mon adversaire|dois je faire|continuer|suite|coups? candidats?"), 0.74, "next_move_phrase"),
     Rule("general_principle", _rx(r"principes?|idee generale|concepts?|regle generale|comment jouer contre|debutants?"), 0.68, "general_principle_phrase"),
-    Rule("explain_current_position", _rx(r"pourquoi|plans?|idees?|explique|comprendre|position|variante|ouverture"), 0.68, "current_explanation_phrase"),
+    Rule("explain_current_position", _rx(r"pourquoi|plans?|idees?|explique|comprendre"), 0.68, "current_explanation_phrase"),
 )
 
 
 _QUALITY_PATTERN = _rx(r"bon coup|mauvais coup|correct|erreurs?|gaffes?|blunder|qualite du coup|evaluer ce coup|est ce correct")
 _SPECIFIC_CANDIDATE_PATTERN = _rx(r"si|joue|avec|prendre|possible|repondre|apres")
+_COMPARISON_MOVE_CONTEXT = _rx(r"coup|coups|suite|reponse|variante|ligne|jouer|joue|agressif|solide|fort|naturel|populaire|risque")
+_COMPARISON_CRITERION = _rx(r"plus (?:agressif|solide|sur|fort|naturel|populaire|risque)|moins (?:sur|risque)")
 
 
 class RuleBasedIntentClassifier:
     def classify(self, context: IntentRouterContext) -> IntentDecision:
-        question = _normalize(context.question)
+        raw_question = context.question or ""
+        question = _normalize(raw_question)
         if not question:
             return _decision("unclear", 0.4, reason_codes=("empty_question",))
 
-        concrete_moves = _moves_in_question(question, context.fen)
-        matched = _matched_candidate(question, context.legal_child_moves, concrete_moves)
-        if matched is not None:
-            if _asks_about_move_quality(question, has_concrete_move=True):
-                return _decision(
-                    "evaluate_move_quality",
-                    0.80,
-                    matched_candidate_move=matched,
-                    reason_codes=("matched_candidate_move", "move_quality_phrase"),
-                )
+        concrete_moves = _moves_in_question(raw_question, context.fen)
+        mentioned = _matched_candidates(question, context.legal_child_moves, concrete_moves)
+        has_concrete_move = bool(concrete_moves) if context.fen else _contains_concrete_move_without_board(raw_question)
+
+        if _asks_about_move_quality(question, has_concrete_move=has_concrete_move):
+            return _decision(
+                "evaluate_move_quality",
+                0.80 if mentioned else 0.78,
+                matched_candidate_move=mentioned[0] if len(mentioned) == 1 else None,
+                reason_codes=("matched_candidate_move", "move_quality_phrase")
+                if len(mentioned) == 1
+                else ("move_quality_phrase",),
+            )
+
+        for rule in _RULES:
+            if rule.intent in {"general_principle", "explain_current_position"}:
+                continue
+            if rule.pattern.search(question):
+                if rule.intent == "compare_moves" and not _is_move_comparison(question):
+                    continue
+                return _decision(rule.intent, rule.confidence, reason_codes=(rule.code,))
+
+        if len(mentioned) >= 2:
+            return _decision("compare_moves", 0.76, reason_codes=("multiple_candidates",))
+        if len(mentioned) == 1 and (
+            has_concrete_move or _asks_about_specific_candidate(question, has_concrete_move=True)
+        ):
             return _decision(
                 "ask_specific_candidate",
                 0.78,
-                matched_candidate_move=matched,
+                matched_candidate_move=mentioned[0],
                 reason_codes=("matched_candidate_move",),
             )
 
-        has_concrete_move = bool(concrete_moves) or _contains_concrete_move_without_board(question)
-        if _asks_about_move_quality(question, has_concrete_move=has_concrete_move):
-            return _decision("evaluate_move_quality", 0.78, reason_codes=("move_quality_phrase",))
-
-        compare_rule = next(rule for rule in _RULES if rule.intent == "compare_moves")
-        if compare_rule.pattern.search(question):
-            return _decision(compare_rule.intent, compare_rule.confidence, reason_codes=(compare_rule.code,))
-
-        next_move_rule = next(rule for rule in _RULES if rule.intent == "ask_next_moves")
-        if next_move_rule.pattern.search(question):
-            return _decision(next_move_rule.intent, next_move_rule.confidence, reason_codes=(next_move_rule.code,))
-
-        if _asks_about_specific_candidate(question, has_concrete_move=has_concrete_move):
-            return _decision("ask_specific_candidate", 0.66, reason_codes=("specific_candidate_phrase",))
-
         for rule in _RULES:
-            if rule.pattern.search(question):
+            if rule.intent in {"general_principle", "explain_current_position"} and rule.pattern.search(question):
                 return _decision(rule.intent, rule.confidence, reason_codes=(rule.code,))
 
         return _decision("explain_current_position", 0.55, reason_codes=("conservative_default",))
@@ -251,8 +243,11 @@ class JevIntentClassifier:
         allowed_intents: Sequence[RetrievalIntent] | None = None,
     ) -> None:
         self._settings = settings or TypeSafeSettings()
+        self._owns_client = client is None
         self._client = client or httpx.Client(timeout=self._settings.timeout_seconds)
-        self._allowed_intents = tuple(allowed_intents or _ROUTABLE_INTENTS)
+        self._allowed_intents = tuple(
+            intent for intent in (allowed_intents or _ROUTABLE_INTENTS) if intent in _ROUTABLE_INTENTS
+        )
 
     def classify(self, context: IntentRouterContext) -> IntentDecision:
         if not self._settings.enabled:
@@ -282,20 +277,11 @@ class JevIntentClassifier:
             default_model=self._settings.model,
             allowed_intents=self._allowed_intents,
         )
-        logger.info(
-            "JEV intent classified",
-            extra={
-                "intent": decision.intent,
-                "confidence": decision.confidence,
-                "source": decision.source,
-                "reason_codes": decision.reason_codes,
-                "provider_model": decision.provider_model,
-            },
-        )
         return decision
 
     def close(self) -> None:
-        self._client.close()
+        if self._owns_client:
+            self._client.close()
 
 
 def _decision(
@@ -321,10 +307,10 @@ def _decision(
 
 def _probabilities(intent: RetrievalIntent, confidence: float) -> dict[RetrievalIntent, float]:
     bounded = max(0.0, min(1.0, confidence))
-    if len(_INTENTS) == 1:
+    if len(_ROUTABLE_INTENTS) == 1:
         return {intent: 1.0}
-    rest = (1.0 - bounded) / (len(_INTENTS) - 1)
-    return {candidate: bounded if candidate == intent else rest for candidate in _INTENTS}
+    rest = (1.0 - bounded) / (len(_ROUTABLE_INTENTS) - 1)
+    return {candidate: bounded if candidate == intent else rest for candidate in _ROUTABLE_INTENTS}
 
 
 def _normalize_probabilities(
@@ -334,7 +320,7 @@ def _normalize_probabilities(
 ) -> dict[RetrievalIntent, float]:
     """Coerce the provider's probability map to a valid distribution over intents."""
     parsed: dict[RetrievalIntent, float] = {}
-    for intent in _INTENTS:
+    for intent in _ROUTABLE_INTENTS:
         value = probabilities.get(intent)
         try:
             parsed[intent] = float(value) if isinstance(value, int | float) else 0.0
@@ -434,7 +420,7 @@ def _join_url(base_url: str, path: str) -> str:
 
 
 def _validate_decision(decision: IntentDecision) -> None:
-    if decision.intent not in _INTENTS:
+    if decision.intent not in _ROUTABLE_INTENTS:
         raise ValueError(f"unknown retrieval intent {decision.intent!r}")
     if not 0.0 <= decision.confidence <= 1.0:
         raise ValueError("intent confidence must be between 0 and 1")
@@ -452,20 +438,23 @@ def _log_decision(decision: IntentDecision, context: IntentRouterContext) -> Non
             "confidence": decision.confidence,
             "source": decision.source,
             "reason_codes": decision.reason_codes,
+            "provider_model": decision.provider_model,
             "has_fen": bool(context.fen),
         },
     )
 
 
-def _matched_candidate(
+def _matched_candidates(
     question: str,
     candidates: Sequence[CandidateMove],
     concrete_moves: Sequence[chess.Move],
-) -> CandidateMove | None:
+) -> list[CandidateMove]:
+    matched: list[CandidateMove] = []
     concrete_uci = {move.uci() for move in concrete_moves}
     for candidate in candidates:
         if candidate.uci and candidate.uci in concrete_uci:
-            return candidate
+            matched.append(candidate)
+            continue
         terms = [
             candidate.san,
             _san_to_french(candidate.san),
@@ -475,8 +464,9 @@ def _matched_candidate(
         ]
         for term in terms:
             if term and _term_in_question(_normalize(term), question):
-                return candidate
-    return None
+                matched.append(candidate)
+                break
+    return matched
 
 
 def _opening_name_aliases(name: str | None) -> tuple[str, ...]:
@@ -507,6 +497,10 @@ def _asks_about_specific_candidate(question: str, *, has_concrete_move: bool) ->
     return has_concrete_move and bool(_SPECIFIC_CANDIDATE_PATTERN.search(question))
 
 
+def _is_move_comparison(question: str) -> bool:
+    return bool(_COMPARISON_MOVE_CONTEXT.search(question) or _COMPARISON_CRITERION.search(question))
+
+
 def _moves_in_question(question: str, fen: str | None) -> list[chess.Move]:
     if not fen:
         return []
@@ -516,27 +510,45 @@ def _moves_in_question(question: str, fen: str | None) -> list[chess.Move]:
         return []
 
     moves: list[chess.Move] = []
-    for token in re.findall(r"(?<!\w)[a-z][a-z0-9=+#-]*(?!\w)", question):
-        for candidate in (token, _french_san_to_english(token)):
-            try:
-                move = board.parse_san(candidate)
-            except ValueError:
-                continue
+    for token in re.findall(r"(?<!\w)[A-Za-z][A-Za-z0-9=+#-]*(?!\w)", question):
+        variants = {token, token.replace("0", "O"), _french_san_to_english(token)}
+        parsed = {move for variant in variants for move in _parse_san_variants(board, variant)}
+        for move in parsed:
             if move not in moves:
                 moves.append(move)
-            break
     return moves
 
 
+def _parse_san_variants(board: chess.Board, token: str) -> set[chess.Move]:
+    if not token:
+        return set()
+    variants = {token, token.replace("0", "O")}
+    if token[0] in "RDTFC":
+        variants.add(token[0].translate(str.maketrans("RDTFC", "KQRBN")) + token[1:])
+    found: set[chess.Move] = set()
+    for variant in variants:
+        try:
+            found.add(board.parse_san(variant))
+        except ValueError:
+            pass
+    return found
+
+
 def _contains_concrete_move_without_board(question: str) -> bool:
-    return bool(re.search(r"(?<!\w)(?:[a-h][1-8][a-h][1-8][qrbn]?|[nbrqkcftdr]?[a-h]?[1-8]?x?[a-h][1-8](?:=[nbrqkcftdr])?[+#]?|o-o(?:-o)?)(?!\w)", question))
+    return bool(
+        re.search(
+            r"(?<!\w)(?:[a-h][1-8][a-h][1-8][qrbn]?|[nbrqkcftdr]?[a-h]?[1-8]?x?[a-h][1-8](?:=[nbrqkcftdr])?|o-o(?:-o)?)[+#]?(?!\w)",
+            question,
+            re.IGNORECASE,
+        )
+    )
 
 
 def _french_san_to_english(token: str) -> str:
     if not token:
         return token
-    pieces = {"c": "N", "f": "B", "t": "R", "d": "Q", "r": "K", "n": "N", "b": "B", "q": "Q", "k": "K"}
-    promoted = re.sub(r"=([cftdr])", lambda match: f"={pieces[match.group(1)]}", token)
+    pieces = {"C": "N", "F": "B", "T": "R", "D": "Q", "R": "K"}
+    promoted = re.sub(r"=([CFTDR])", lambda match: f"={pieces[match.group(1)]}", token)
     first = promoted[0]
     if first in pieces:
         return pieces[first] + promoted[1:]

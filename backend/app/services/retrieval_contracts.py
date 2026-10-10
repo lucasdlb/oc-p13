@@ -385,6 +385,15 @@ class StockfishEval(ContractModel):
     model_config = ConfigDict(frozen=True, extra="allow")
 
 
+class EvidencePack(ContractModel):
+    """Normalized facts presented to the coach for interpretation."""
+
+    position: CoachPositionContext
+    lichess_stats: dict | None = None
+    explorer_moves: tuple[RecommendedMove, ...] = ()
+    stockfish: StockfishEval | None = None
+
+
 class CoachContext(ContractModel):
     current_position: CoachPositionContext
     question: str | None = None

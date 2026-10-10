@@ -4,6 +4,7 @@
 }
 
 .app-shell {
+  --board-size-limit: calc(100dvh - 190px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
@@ -145,7 +146,7 @@ button {
   align-items: stretch;
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(600px, 0.92fr) minmax(680px, 1.08fr);
+  grid-template-columns: minmax(560px, 0.95fr) minmax(620px, 1.05fr);
   height: 100%;
   margin: 0 auto;
   max-width: 1760px;
@@ -154,22 +155,32 @@ button {
 }
 
 .board-column {
+  --history-height: 84px;
   align-content: start;
   align-items: start;
   display: grid;
+  grid-template-rows: minmax(0, 1fr) var(--history-height);
   gap: 10px;
   grid-column: 1;
   grid-row: 1;
   justify-items: stretch;
   min-height: 0;
   overflow: hidden;
-  width: min(100%, calc(100dvh - 250px));
+  width: min(100%, var(--board-size-limit));
 }
 
 app-chessboard,
 app-move-history {
   display: block;
   width: 100%;
+}
+
+app-chessboard {
+  justify-self: center;
+}
+
+app-move-history {
+  justify-self: stretch;
 }
 
 app-analysis-panel {
@@ -180,7 +191,7 @@ app-analysis-panel {
   min-width: 0;
 }
 
-@media (max-width: 1320px) {
+@media (max-width: 1100px) {
   .app-shell {
     height: auto;
     min-height: 100dvh;
@@ -229,7 +240,7 @@ app-analysis-panel {
   .board-column {
     grid-column: auto;
     overflow: visible;
-    width: min(100%, calc(100dvh - 250px));
+    width: 100%;
   }
 }
 

@@ -80,6 +80,44 @@ body {
   margin-top: 6px;
 }
 
+.analysis-card .video-list {
+  display: grid;
+  gap: 8px;
+}
+
+.analysis-card .video-card {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid rgba(255, 239, 224, 0.1);
+  border-radius: 12px;
+  background: #2d2925;
+  color: inherit;
+  padding: 8px;
+  text-decoration: none;
+}
+
+.analysis-card .video-card:hover {
+  border-color: #ff6a00;
+}
+
+.analysis-card .video-card img {
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  object-fit: cover;
+  width: 100%;
+}
+
+.analysis-card .video-card-body {
+  display: grid;
+  gap: 6px;
+}
+
+.analysis-card .video-card-body small {
+  color: #b8afa4;
+  line-height: 1.35;
+}
+
 .analysis-card .move-row {
   border: 0;
   border-radius: 0;

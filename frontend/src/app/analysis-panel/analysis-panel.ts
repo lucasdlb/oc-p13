@@ -1,7 +1,7 @@
 import { Component, computed, input, output, signal } from '@angular/core';
 import { PercentPipe } from '@angular/common';
 
-import { AnalyzePositionResponse, RecommendedMove } from '../models/analysis';
+import { AnalyzePositionResponse, RecommendedMove, Video } from '../models/analysis';
 import { CoachMarkdownComponent } from '../coach-markdown/coach-markdown';
 import { BoardMove } from '../models/game';
 
@@ -26,12 +26,14 @@ export class AnalysisPanelComponent {
   readonly moveRequested = output<BoardMove>();
   readonly lineRequested = output<BoardMove[]>();
   readonly questionSubmit = output<string>();
+  readonly explanationRequest = output<void>();
   readonly loading = input(false);
   readonly stockfishLoading = input(false);
   readonly ragLoading = input(false);
   readonly coachStreaming = input(false);
   readonly error = input<string | null>(null);
   readonly activeExplorer = signal<'lichess' | 'masters'>('lichess');
+  readonly activePanel = signal<'stats' | 'sources' | 'videos'>('stats');
 
   submitQuestion(event: SubmitEvent, value: string): void {
     event.preventDefault();
@@ -115,6 +117,27 @@ export class AnalysisPanelComponent {
     this.activeExplorer.set(tab);
   }
 
+  showPanel(panel: 'stats' | 'sources' | 'videos'): void {
+    this.activePanel.set(panel);
+  }
+
+  panelLabel(panel: 'stats' | 'sources' | 'videos'): string {
+    return panel === 'stats' ? 'Statistiques' : panel === 'sources' ? 'Sources' : 'Vidéos';
+  }
+
+  videoSourceLabel(video: Video): string {
+    return video.source === 'youtube-data-api' ? 'YouTube' : 'Recherche YouTube';
+  }
+
+  videoDuration(video: Video): string | null {
+    if (video.duration_seconds == null) {
+      return null;
+    }
+    const minutes = Math.floor(video.duration_seconds / 60);
+    const seconds = video.duration_seconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }
+
   previewRecommendedMove(move: RecommendedMove): void {
     const boardMove = this.toBoardMove(move.uci);
     if (boardMove) {
@@ -146,16 +169,67 @@ export class AnalysisPanelComponent {
   }
 
   stockfishLabel(): string {
-    const status = this.analysis()?.stockfish?.['status'];
-    if (status === 'ok') {
-      return 'Evaluation disponible';
+    const analysis = this.analysis();
+    if (!analysis) {
+      return 'Évaluation indisponible';
     }
 
-    if (status === 'unavailable') {
-      return `Indisponible (${this.analysis()?.stockfish?.['reason'] ?? 'raison inconnue'})`;
+    if (analysis.stockfish_status === 'pending' || analysis.stockfish_status === 'running') {
+      return 'Évaluation en cours...';
     }
 
-    return 'Evaluation indisponible';
+    if (analysis.stockfish_status === 'skipped') {
+      return 'Pas d’appel moteur nécessaire pour cette position.';
+    }
+
+    const engineStatus = analysis.stockfish?.['status'];
+    if (engineStatus === 'unavailable') {
+      return `Indisponible (${analysis.stockfish?.['reason'] ?? 'raison inconnue'})`;
+    }
+
+    if (analysis.stockfish_status === 'failed') {
+      return 'Échec de l’évaluation moteur.';
+    }
+
+    return 'Évaluation indisponible';
+  }
+
+  stockfishMoves(): string[] {
+    const stockfish = this.analysis()?.stockfish;
+    if (!stockfish || stockfish['status'] !== 'ok') {
+      return [];
+    }
+
+    const candidates: unknown[] = [stockfish['best_move']];
+    if (Array.isArray(stockfish['variations'])) {
+      for (const variation of stockfish['variations']) {
+        if (variation && typeof variation === 'object') {
+          candidates.push((variation as Record<string, unknown>)['best_move']);
+        }
+      }
+    }
+
+    return [...new Set(candidates.filter((move): move is string => typeof move === 'string'))]
+      .filter((move) => this.toBoardMove(move) !== null);
+  }
+
+  previewStockfishMove(uci: string): void {
+    const boardMove = this.toBoardMove(uci);
+    if (boardMove) {
+      this.movePreview.emit(boardMove);
+    }
+  }
+
+  requestStockfishMove(uci: string): void {
+    const boardMove = this.toBoardMove(uci);
+    if (boardMove) {
+      this.moveRequested.emit(boardMove);
+    }
+  }
+
+  stockfishDepth(): number | null {
+    const depth = this.analysis()?.stockfish?.['depth'];
+    return typeof depth === 'number' ? depth : null;
   }
 
   stockfishDetails(): string | null {

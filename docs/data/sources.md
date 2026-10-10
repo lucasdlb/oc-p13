@@ -11,7 +11,7 @@ licence ou des conditions d'utilisation verifiees avant d'etre utilisee dans la 
 | Lichess Cloud Evaluation | voie rapide optionnelle pour evaluations moteur pre-calculees | reporte | endpoint distant, couverture partielle, score point de vue Blancs |
 | Wikibooks Chess Opening Theory | prose pedagogique RAG | a verifier | CC BY-SA, attribution et partage a l'identique |
 | Wikichess / FICGS | source pedagogique optionnelle | a verifier | HTML et conditions a challenger |
-| YouTube Data API | videos explicatives | a valider | cle API, quota, fallback lien de recherche |
+| YouTube Data API | videos explicatives | utilise | cle API, quota, cache MongoDB, filtrage duree, fallback lien de recherche |
 | Stockfish | evaluation moteur locale garantie hors theorie | valide POC | binaire local, score point de vue du trait, cache sur succes |
 
 ## Stockfish Et Cloud Eval

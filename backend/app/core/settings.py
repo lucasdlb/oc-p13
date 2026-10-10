@@ -47,10 +47,27 @@ class LichessSettings(StrictModel):
     token: SecretStr | None = None
 
 
+class YouTubeSettings(StrictModel):
+    enabled: bool = False
+    base_url: str = Field(default="https://www.googleapis.com/youtube/v3", min_length=1)
+    timeout_seconds: float = Field(default=2.0, gt=0)
+    max_results: int = Field(default=3, ge=1, le=50)
+    relevance_language: str = Field(default="fr", min_length=2, max_length=5)
+    api_key: SecretStr | None = None
+
+
 class StockfishSettings(StrictModel):
     binary: str = Field(default="stockfish", min_length=1)
     depth: int = Field(default=12, ge=1, le=30)
-    timeout_seconds: float = Field(default=5.0, gt=0)
+    depth_by_level: dict[str, int] = Field(
+        default_factory=lambda: {"debutant": 12, "intermediaire": 16, "avance": 20}
+    )
+    threads: int = Field(default=4, ge=1, le=1024)
+    hash_mb: int = Field(default=128, ge=1, le=33554432)
+    timeout_seconds: float = Field(default=8.0, gt=0)
+
+    def depth_for_level(self, level: str) -> int:
+        return self.depth_by_level.get(level, self.depth)
 
 
 class MongoSettings(StrictModel):
@@ -190,6 +207,7 @@ class Settings(StrictModel):
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     orchestration: OrchestrationSettings = Field(default_factory=OrchestrationSettings)
     lichess: LichessSettings = Field(default_factory=LichessSettings)
+    youtube: YouTubeSettings = Field(default_factory=YouTubeSettings)
     stockfish: StockfishSettings = Field(default_factory=StockfishSettings)
     mongodb: MongoSettings = Field(default_factory=MongoSettings)
     embeddings: EmbeddingsSettings = Field(default_factory=EmbeddingsSettings)
@@ -235,6 +253,13 @@ def _without_config_secrets(config: dict) -> dict:
         "token",
         "lichess.token found in config.toml is ignored: "
         "secrets must come from LICHESS_TOKEN in the environment or .env",
+    )
+    _strip_config_key(
+        stripped,
+        "youtube",
+        "api_key",
+        "youtube.api_key found in config.toml is ignored: "
+        "secrets must come from YOUTUBE_API_KEY in the environment or .env",
     )
     _strip_config_key(
         stripped,
@@ -312,6 +337,10 @@ def _with_secret_env(config: dict) -> dict:
     lichess_token = os.environ.get("LICHESS_TOKEN") or _read_dotenv_value("LICHESS_TOKEN")
     if lichess_token:
         merged["lichess"] = {**merged.get("lichess", {}), "token": lichess_token}
+
+    youtube_api_key = os.environ.get("YOUTUBE_API_KEY") or _read_dotenv_value("YOUTUBE_API_KEY")
+    if youtube_api_key:
+        merged["youtube"] = {**merged.get("youtube", {}), "api_key": youtube_api_key}
 
     mongo_uri = os.environ.get("MONGODB_URI") or _read_dotenv_value("MONGODB_URI")
     if mongo_uri:

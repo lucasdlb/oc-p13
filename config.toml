@@ -11,10 +11,19 @@ enabled = true
 base_url = "https://explorer.lichess.org"
 timeout_seconds = 2.0
 
+[youtube]
+enabled = true
+timeout_seconds = 2.0
+max_results = 3
+relevance_language = "fr"
+
 [stockfish]
 binary = "stockfish"
 depth = 12
-timeout_seconds = 5.0
+depth_by_level = { debutant = 12, intermediaire = 16, avance = 20 }
+threads = 4
+hash_mb = 128
+timeout_seconds = 8.0
 
 [mongodb]
 enabled = true

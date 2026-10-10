@@ -17,9 +17,10 @@ from backend.app.api.routes import (
     get_run_store,
     get_session_store,
     get_stockfish_service,
+    get_youtube_client,
 )
 from backend.app.core.settings import get_settings
-from backend.app.models.analysis import AnalyzePositionRequest, LichessStats, Opening, RecommendedMove
+from backend.app.models.analysis import AnalyzePositionRequest, LichessStats, Opening, RecommendedMove, Video
 from backend.app.services.analysis import _rating_buckets
 from backend.app.services.cache_store import CacheStore
 from backend.app.services.coach import ConservativeCoachService
@@ -32,6 +33,7 @@ from backend.app.services.rag import RagRetrievalResult
 from backend.app.services.retrieval_contracts import OpeningTreeContext, OpeningTreeNodeContext, RetrievedContext
 from backend.app.services.session_store import SessionStore
 from backend.app.services.run_store import RunStore
+from backend.app.services.youtube import YouTubeSearchResult
 from backend.tests.fakes import FakeDatabase
 
 
@@ -130,12 +132,12 @@ class DisabledLichessClient(FallbackLichessClient):
 
 
 class SuccessfulStockfishService:
-    def evaluate(self, _fen: str, *, multipv: int = 1) -> dict:
+    def evaluate(self, _fen: str, *, multipv: int = 1, depth: int | None = None) -> dict:
         return {
             "status": "ok",
             "best_move": "g1f3",
             "score": {"type": "cp", "value": 24},
-            "depth": 12,
+            "depth": depth or 12,
             "pv": ("g1f3",),
             "multipv": multipv,
             "variations": [],
@@ -155,9 +157,16 @@ class CountingStockfishService(SuccessfulStockfishService):
     def __init__(self) -> None:
         self.calls = 0
 
-    def evaluate(self, _fen: str, *, multipv: int = 1) -> dict:
+    def evaluate(self, _fen: str, *, multipv: int = 1, depth: int | None = None) -> dict:
         self.calls += 1
-        return super().evaluate(_fen, multipv=multipv)
+        return super().evaluate(_fen, multipv=multipv, depth=depth)
+
+
+class MissingKeyYouTubeClient:
+    def search(self, query: str) -> YouTubeSearchResult:
+        from backend.app.services.youtube import _fallback_result
+
+        return _fallback_result(query, "youtube_missing_api_key")
 
 
 RUY_TREE_NODE = OpeningTreeNodeContext(
@@ -242,10 +251,53 @@ def hermetic_coach_service() -> Iterator[None]:
     yield
 
 
+@pytest.fixture(autouse=True)
+def hermetic_youtube_client() -> Iterator[None]:
+    app.dependency_overrides[get_youtube_client] = lambda: MissingKeyYouTubeClient()
+    yield
+
+
 def _post_analysis(payload: dict) -> dict:
     response = client.post("/api/analyze-position", json=payload)
     assert response.status_code == 200
     return response.json()
+
+
+def test_get_videos_returns_api_results() -> None:
+    class SuccessfulYouTubeClient:
+        def search(self, _query: str) -> YouTubeSearchResult:
+            return YouTubeSearchResult(
+                [Video(title="Ruy Lopez explained", url="https://www.youtube.com/watch?v=abc123", source="youtube-data-api")]
+            )
+
+    app.dependency_overrides[get_youtube_client] = lambda: SuccessfulYouTubeClient()
+
+    response = client.get("/api/videos", params={"opening": "Ruy Lopez", "level": "debutant"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "videos": [
+            {
+                "title": "Ruy Lopez explained",
+                "url": "https://www.youtube.com/watch?v=abc123",
+                "source": "youtube-data-api",
+                "channel_title": None,
+                "thumbnail_url": None,
+                "published_at": None,
+                "description": None,
+                "duration_seconds": None,
+                "view_count": None,
+            }
+        ],
+        "fallbacks_used": [],
+        "cache": "miss",
+    }
+
+
+def test_get_videos_validates_level() -> None:
+    response = client.get("/api/videos", params={"opening": "Ruy Lopez", "level": "expert"})
+
+    assert response.status_code == 422
 
 
 def _get_session(session_id: str) -> dict:
@@ -417,24 +469,30 @@ def test_analyze_position_returns_documented_contract() -> None:
             "reason": None,
         },
         "rag_context": [],
-        "coach_explanation": "Le coach detaille est en cours de redaction. Les donnees de l'explorateur sont deja disponibles ci-contre.",
+        "coach_explanation": "",
         "coach_status": "pending",
         "analysis_key": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1|debutant|1000,1200",
         "stockfish": None,
         "videos": [
             {
-                "title": "Recherche YouTube: King's Pawn Game debutant",
-                "url": "https://www.youtube.com/results?search_query=King%27s+Pawn+Game+chess+opening+debutant",
+                "title": "Recherche YouTube: King's Pawn Game chess opening tutorial explanation debutant",
+                "url": "https://www.youtube.com/results?search_query=King%27s+Pawn+Game+chess+opening+tutorial+explanation+debutant",
                 "source": "youtube-search-fallback",
+                "channel_title": None,
+                "thumbnail_url": None,
+                "published_at": None,
+                "description": None,
+                "duration_seconds": None,
+                "view_count": None,
             }
         ],
         "fallbacks_used": [
             "demo_opening_seed",
             "lichess_disabled",
             "masters_unavailable",
-            "youtube_search_fallback",
+            "youtube_missing_api_key",
         ],
-        "cache": {"lichess": "miss", "masters": "miss", "stockfish": "skipped"},
+        "cache": {"lichess": "miss", "masters": "miss", "stockfish": "skipped", "videos": "skipped"},
     }
 
 
@@ -628,7 +686,7 @@ def test_analyze_position_uses_lichess_opening_when_local_seed_unknown() -> None
     assert body["rag_context"] == []
     assert "opening_not_matched" not in body["fallbacks_used"]
     assert "demo_opening_seed" not in body["fallbacks_used"]
-    assert "youtube_search_fallback" in body["fallbacks_used"]
+    assert "youtube_missing_api_key" in body["fallbacks_used"]
 
 
 def test_analyze_position_maps_retrieved_rag_context_with_source_attribution() -> None:
@@ -1457,6 +1515,7 @@ def test_analyze_position_degrades_when_mongo_unavailable() -> None:
         "lichess": "skipped",
         "masters": "skipped",
         "stockfish": "skipped",
+        "videos": "skipped",
     }
     assert body["opening"]["matched"] is True
 

@@ -1,4 +1,4 @@
-import { Component, input, output } from '@angular/core';
+import { Component, input, output, signal } from '@angular/core';
 
 @Component({
   selector: 'app-move-history',
@@ -14,4 +14,12 @@ export class MoveHistoryComponent {
 
   readonly goBack = output<void>();
   readonly goForward = output<void>();
+  readonly copied = signal(false);
+
+  async copyPgn(): Promise<void> {
+    const value = this.pgn() || 'Position initiale';
+    await navigator.clipboard?.writeText(value);
+    this.copied.set(true);
+    setTimeout(() => this.copied.set(false), 1600);
+  }
 }

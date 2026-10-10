@@ -1,44 +1,40 @@
 <section class="analysis-card">
-  @if (error() && !analysis()) {
-    <aside class="coach-column panel-card">
-      <p class="eyebrow">Coach IA</p>
-      <div class="state error">{{ error() }}</div>
-    </aside>
-    <aside class="explorer-column panel-card muted-panel">
-      <p class="eyebrow">Explorer</p>
-      <h2>Donnees</h2>
-    </aside>
-  } @else if (analysis(); as result) {
+  @if (analysis(); as result) {
     <aside class="coach-column panel-card">
       <div class="panel-heading opening-heading">
         <div>
-          <p class="eyebrow">Coach IA</p>
+          <p class="eyebrow coach-title"><span>Coach IA</span><span>Comprendre la position</span></p>
         </div>
-        <div class="opening-summary" aria-label="Ouverture identifiee">
+        <div class="opening-summary" aria-label="Ouverture identifiée">
           <strong>{{ result.opening.eco }}</strong>
           <span>{{ result.opening.name }}</span>
         </div>
       </div>
 
-      <article class="coach-note primary-note">
-        <h3>Explication</h3>
-          <app-coach-markdown
-            [text]="result.coach_explanation"
-            [moves]="coachMoves()"
-            [fen]="fen()"
-            [legalMoves]="legalMoves()"
-            (movePreview)="movePreview.emit($event)"
-            (squarePreview)="squarePreview.emit($event)"
-            (moveRequested)="moveRequested.emit($event)"
-            (lineRequested)="lineRequested.emit($event)"
-          />
-        @if (coachStreaming()) {
-          <small>Le coach redige une explication sourcee...</small>
-        }
-      </article>
+      <div class="coach-scroll">
+        <article class="coach-note primary-note">
+          @if (result.coach_status === 'pending' && !coachStreaming()) {
+            <p class="state">Pose une question sur cette position ou demande une explication de la position.</p>
+          } @else {
+            <app-coach-markdown
+              [text]="result.coach_explanation"
+              [moves]="coachMoves()"
+              [fen]="fen()"
+              [legalMoves]="legalMoves()"
+              (movePreview)="movePreview.emit($event)"
+              (squarePreview)="squarePreview.emit($event)"
+              (moveRequested)="moveRequested.emit($event)"
+              (lineRequested)="lineRequested.emit($event)"
+            />
+          }
+          @if (coachStreaming()) {
+            <small>Le coach rédige une explication sourcée...</small>
+          }
+        </article>
+      </div>
 
       <form class="question-form" (submit)="submitQuestion($event, questionInput.value)">
-        <label for="coach-question">Question sur cette position</label>
+        <label class="sr-only" for="coach-question">Question sur cette position</label>
         <div class="question-controls">
           <input
             #questionInput
@@ -48,332 +44,124 @@
             maxlength="500"
             required
             [value]="activeQuestion() ?? ''"
-            placeholder="Ex: Que peuvent jouer les Noirs ?"
+            placeholder="Question sur cette position..."
             [disabled]="loading() || coachStreaming()"
           />
-          <button
-            type="submit"
-            class="question-submit"
-            [disabled]="loading() || coachStreaming()"
-          >
+          <button type="submit" class="question-submit" [disabled]="loading() || coachStreaming()">
             Demander
           </button>
         </div>
-        @if (activeQuestion(); as question) {
-          <small class="active-question">Question active : {{ question }}</small>
-        }
+        <button
+          type="button"
+          class="explanation-submit"
+          [disabled]="loading() || coachStreaming()"
+          (click)="explanationRequest.emit()"
+        >
+          Analyser la position
+        </button>
       </form>
+    </aside>
 
-      <article class="coach-note secondary-note">
-        <details class="context-disclosure">
-          <summary>
-            <span>Contexte pedagogique</span>
-            <small>{{ result.rag_context.length }} source(s)</small>
-          </summary>
-          @if (ragLoading()) {
-            <p class="state">Recherche du contexte pedagogique...</p>
-          } @else if (result.rag_context.length) {
-            <div class="context-list">
-              @for (context of result.rag_context; track context.chunk_id || context.text) {
-                <article class="context-card">
-                  <div class="context-heading">
-                    <div>
-                      <strong>{{ context.section_title || context.canonical_title || context.source }}</strong>
-                      <small>{{ contextRelationLabel(context) }}</small>
-                    </div>
-                    @if (context.url) {
-                      <a
-                        class="source-link"
-                        [href]="context.url"
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Ouvrir la source
-                      </a>
-                    }
-                  </div>
-                  @if (context.opening_name || context.eco_code || context.license_or_terms) {
-                    <small class="context-meta">
-                      @if (context.opening_name) {
-                        {{ context.opening_name }}
-                      }
-                      @if (context.eco_code) {
-                        · {{ context.eco_code }}
-                      }
-                      @if (context.license_or_terms) {
-                        · {{ context.license_or_terms }}
-                      }
-                    </small>
-                  }
-                  <details>
-                    <summary>Voir l'extrait</summary>
-                    <p>{{ context.text }}</p>
-                  </details>
-                </article>
-              }
-            </div>
-          } @else {
-            <p class="state">Aucun contexte pedagogique disponible.</p>
-          }
-        </details>
-      </article>
-
+    <nav class="analysis-tabs" role="tablist" aria-label="Données de position">
+      <button type="button" role="tab" [attr.aria-selected]="activePanel() === 'stats'" [class.active]="activePanel() === 'stats'" (click)="showPanel('stats')">
+        Statistiques
+      </button>
+      <button type="button" role="tab" [attr.aria-selected]="activePanel() === 'sources'" [class.active]="activePanel() === 'sources'" [class.empty]="!result.rag_context.length" (click)="showPanel('sources')">
+        Sources <span>{{ result.rag_context.length }}</span>
+      </button>
       @if (result.videos.length) {
-        <article class="coach-note compact-note">
-          <h3>Videos</h3>
-          @for (video of result.videos; track video.url) {
-            <a [href]="video.url" target="_blank" rel="noreferrer">{{ video.title }}</a>
-            <small>{{ video.source }}</small>
-          }
-        </article>
+        <button type="button" role="tab" [attr.aria-selected]="activePanel() === 'videos'" [class.active]="activePanel() === 'videos'" (click)="showPanel('videos')">
+          Vidéos <span>{{ result.videos.length }}</span>
+        </button>
       }
+    </nav>
 
-      @if (result.fallbacks_used.length) {
-        <div class="fallbacks">
-          @for (fallback of result.fallbacks_used; track fallback) {
-            <span>{{ fallback }}</span>
-          }
-        </div>
-      }
-    </aside>
-
-    <aside class="explorer-column panel-card">
-      <div class="panel-heading compact-heading">
-        <div>
-          <p class="eyebrow">{{ activeExplorerLabel() }}</p>
-          <h2>Coups & stats</h2>
-        </div>
-        @if (formattedExplorerTotal() !== null) {
-          <span class="games-total">{{ formattedExplorerTotal() }} parties</span>
-        }
-      </div>
-
-      @if (result.masters_moves.length) {
-        <div class="explorer-tabs" aria-label="Source des coups">
-          <button type="button" [class.active]="activeExplorer() === 'lichess'" (click)="showExplorerTab('lichess')">
-            Lichess
-          </button>
-          <button type="button" [class.active]="activeExplorer() === 'masters'" (click)="showExplorerTab('masters')">
-            Masters
-          </button>
-        </div>
-      }
-
-      @if (activeExplorer() === 'lichess' || !result.masters_moves.length) {
-         <div class="lichess-filter" aria-label="Filtre Elo Lichess">
-           <div class="filter-heading">
-             <strong>Filtre Elo Lichess</strong>
-           </div>
-           <div class="filter-controls">
-             <label>
-               <span>Min</span>
-               <select [value]="ratingMin()" (change)="setRatingMin($any($event.target).value)">
-                 @for (bucket of ratingBuckets(); track bucket) {
-                   <option [value]="bucket" [selected]="bucket === ratingMin()">{{ bucket }}</option>
-                 }
-               </select>
-             </label>
-             <label>
-               <span>Max</span>
-               <select [value]="ratingMax()" (change)="setRatingMax($any($event.target).value)">
-                 @for (bucket of ratingBuckets(); track bucket) {
-                   <option [value]="bucket" [selected]="bucket === ratingMax()">{{ bucket }}</option>
-                 }
-               </select>
-             </label>
-           </div>
-         </div>
-        <div class="moves-scroll">
-          <article class="moves-table">
-            <div class="table-head">
-              <span>Coup</span>
-              <span>Parties</span>
-              <span>Resultat</span>
+    <section class="tab-panel panel-card" role="tabpanel">
+      @if (activePanel() === 'stats') {
+        <div class="explorer-toolbar">
+          <div class="explorer-source">
+            <p class="eyebrow">{{ activeExplorerLabel() }}</p>
+            @if (formattedExplorerTotal() !== null) {
+              <span class="games-total">{{ formattedExplorerTotal() }} parties</span>
+            }
+          </div>
+          @if (result.masters_moves.length) {
+            <div class="explorer-tabs" aria-label="Source des coups">
+              <button type="button" [class.active]="activeExplorer() === 'lichess'" (click)="showExplorerTab('lichess')">Lichess</button>
+              <button type="button" [class.active]="activeExplorer() === 'masters'" (click)="showExplorerTab('masters')">Masters</button>
             </div>
-            @for (move of sortedRecommendedMoves(); track move.uci) {
-              <button
-                type="button"
-                class="move-row"
-                [attr.aria-label]="'Jouer le coup ' + move.san"
-                (mouseenter)="previewRecommendedMove(move)"
-                (mouseleave)="clearMovePreview()"
-                (focus)="previewRecommendedMove(move)"
-                (blur)="clearMovePreview()"
-                (click)="requestMove(move)"
-                >
-                <div class="move-name">
-                  <div class="move-line">
-                    <strong>{{ move.san }}</strong>
-                    @if (averageRatingLabel(move); as averageRating) {
-                      <small>{{ averageRating }}</small>
-                    }
-                  </div>
-                  @if (visibleBadges(move, 'lichess').length) {
-                    <div class="badges">
-                      @for (badge of visibleBadges(move, 'lichess'); track badge) {
-                        <span>{{ badge }}</span>
-                      }
-                    </div>
-                  }
-                  </div>
-                <span class="move-games">
-                  @if (move.games !== null) {
-                    {{ formattedGames(move) }}
-                  } @else {
-                    -
-                  }
+          }
+          @if (activeExplorer() === 'lichess' || !result.masters_moves.length) {
+            <div class="lichess-filter" aria-label="Filtre Elo Lichess">
+              <strong>Filtre Elo</strong>
+              <div class="filter-controls">
+                <label>Min <select [value]="ratingMin()" (change)="setRatingMin($any($event.target).value)">@for (bucket of ratingBuckets(); track bucket) { <option [value]="bucket" [selected]="bucket === ratingMin()">{{ bucket }}</option> }</select></label>
+                <label>Max <select [value]="ratingMax()" (change)="setRatingMax($any($event.target).value)">@for (bucket of ratingBuckets(); track bucket) { <option [value]="bucket" [selected]="bucket === ratingMax()">{{ bucket }}</option> }</select></label>
+              </div>
+            </div>
+          }
+        </div>
+        @if (activeExplorer() === 'lichess' || !result.masters_moves.length) {
+          <div class="moves-scroll">
+            <article class="moves-table">
+              <div class="table-head"><span>Coup</span><span>Parties</span><span>Résultats</span></div>
+              @for (move of sortedRecommendedMoves(); track move.uci) {
+                <button type="button" class="move-row" [attr.aria-label]="'Jouer le coup ' + move.san" (mouseenter)="previewRecommendedMove(move)" (mouseleave)="clearMovePreview()" (focus)="previewRecommendedMove(move)" (blur)="clearMovePreview()" (click)="requestMove(move)">
+                  <div class="move-name"><div class="move-line"><strong>{{ move.san }}</strong>@if (averageRatingLabel(move); as averageRating) {<small>{{ averageRating }}</small>}</div>@if (visibleBadges(move, 'lichess').length) {<div class="badges">@for (badge of visibleBadges(move, 'lichess'); track badge) {<span>{{ badge }}</span>}</div>}</div>
+                  <span class="move-games">{{ formattedGames(move) }}</span>
+                  <div class="result-cell"><div class="result-bar" aria-hidden="true"><span class="white" [style.flex-grow]="move.white ?? 0"></span><span class="draw" [style.flex-grow]="move.draws ?? 0"></span><span class="black" [style.flex-grow]="move.black ?? 0"></span></div><div class="result-labels"><span [style.flex-grow]="move.white ?? 0">{{ move.white !== null ? (move.white | percent:'1.0-0') : '-' }}</span><span [style.flex-grow]="move.draws ?? 0">{{ move.draws !== null ? (move.draws | percent:'1.0-0') : '-' }}</span><span [style.flex-grow]="move.black ?? 0">{{ move.black !== null ? (move.black | percent:'1.0-0') : '-' }}</span></div></div>
+                </button>
+              }
+            </article>
+          </div>
+        }
+
+        @if (result.masters_moves.length && activeExplorer() === 'masters') {
+          <div class="moves-scroll">
+            <article class="moves-table masters-table">
+              <div class="table-head"><span>Coup</span><span>Parties</span><span>Résultats</span></div>
+              @for (move of result.masters_moves; track move.uci) {
+                <button type="button" class="move-row" [attr.aria-label]="'Jouer le coup ' + move.san" (mouseenter)="previewRecommendedMove(move)" (mouseleave)="clearMovePreview()" (focus)="previewRecommendedMove(move)" (blur)="clearMovePreview()" (click)="requestMove(move)"><div class="move-name"><div class="move-line"><strong>{{ move.san }}</strong>@if (averageRatingLabel(move); as averageRating) {<small>{{ averageRating }}</small>}</div></div><span class="move-games">{{ formattedGames(move) }}</span><div class="result-cell"><div class="result-bar" aria-hidden="true"><span class="white" [style.flex-grow]="move.white ?? 0"></span><span class="draw" [style.flex-grow]="move.draws ?? 0"></span><span class="black" [style.flex-grow]="move.black ?? 0"></span></div><div class="result-labels"><span [style.flex-grow]="move.white ?? 0">{{ move.white !== null ? (move.white | percent:'1.0-0') : '-' }}</span><span [style.flex-grow]="move.draws ?? 0">{{ move.draws !== null ? (move.draws | percent:'1.0-0') : '-' }}</span><span [style.flex-grow]="move.black ?? 0">{{ move.black !== null ? (move.black | percent:'1.0-0') : '-' }}</span></div></div></button>
+              }
+            </article>
+          </div>
+        }
+
+        <div class="stats-footer">
+          @if (activeExplorer() === 'lichess' && hasStats()) {
+            <article class="stats-card"><h3>Lichess</h3><div class="result-bar large"><span class="white" [style.flex-grow]="result.lichess_stats.white"></span><span class="draw" [style.flex-grow]="result.lichess_stats.draws"></span><span class="black" [style.flex-grow]="result.lichess_stats.black"></span></div><div class="stats-legend"><span>Blancs {{ result.lichess_stats.white | percent }}</span><span>Nulles {{ result.lichess_stats.draws | percent }}</span><span>Noirs {{ result.lichess_stats.black | percent }}</span></div></article>
+          }
+          @if (activeExplorer() === 'masters' && result.masters_stats.games > 0) {
+            <article class="stats-card masters-stats-card"><h3>Masters</h3><div class="result-bar large"><span class="white" [style.flex-grow]="result.masters_stats.white"></span><span class="draw" [style.flex-grow]="result.masters_stats.draws"></span><span class="black" [style.flex-grow]="result.masters_stats.black"></span></div><div class="stats-legend"><span>Blancs {{ result.masters_stats.white | percent }}</span><span>Nulles {{ result.masters_stats.draws | percent }}</span><span>Noirs {{ result.masters_stats.black | percent }}</span></div></article>
+          }
+           <article class="stockfish-card compact-status"><h3>Stockfish</h3>@if (stockfishLoading() || result.stockfish_status === 'pending' || result.stockfish_status === 'running') {<p>Évaluation en cours...</p>} @else if (result.stockfish?.['status'] === 'ok') {<p>{{ stockfishDetails() || 'Évaluation disponible' }}</p>} @else {<p>{{ stockfishLabel() }}</p>}</article>
+        </div>
+      } @else if (activePanel() === 'sources') {
+        <div class="source-heading"><p class="eyebrow">Contexte pédagogique</p><span class="games-total">{{ result.rag_context.length }} source(s)</span></div>
+        @if (ragLoading()) {<p class="state">Recherche du contexte pédagogique...</p>} @else if (result.rag_context.length) {<div class="context-list">@for (context of result.rag_context; track context.chunk_id || context.text) {<article class="context-card"><div class="context-heading"><div><strong>{{ context.section_title || context.canonical_title || context.source }}</strong><small>{{ contextRelationLabel(context) }}</small></div>@if (context.url) {<a class="source-link" [href]="context.url" target="_blank" rel="noreferrer">Ouvrir</a>}</div>@if (context.opening_name || context.eco_code || context.license_or_terms) {<small class="context-meta">{{ context.opening_name }} @if (context.eco_code) { · {{ context.eco_code }}} @if (context.license_or_terms) { · {{ context.license_or_terms }}}</small>}<details><summary>Voir l'extrait</summary><p>{{ context.text }}</p></details></article>}</div>} @else {<p class="state">Aucune source disponible.</p>}
+      } @else {
+        <div class="source-heading"><p class="eyebrow">Ressources</p></div>
+        @if (result.videos.length) {
+          <div class="video-list">
+            @for (video of result.videos; track video.url) {
+              <a class="video-card" [href]="video.url" target="_blank" rel="noreferrer">
+                @if (video.thumbnail_url) {<img [src]="video.thumbnail_url" [alt]="'Miniature de ' + video.title" loading="lazy" />}
+                <span class="video-card-body">
+                  <strong>{{ video.title }}</strong>
+                  <small>
+                    {{ videoSourceLabel(video) }}
+                    @if (video.channel_title) { · {{ video.channel_title }}}
+                    @if (videoDuration(video); as duration) { · {{ duration }}}
+                  </small>
                 </span>
-                <div class="result-cell">
-                  <div class="result-bar" aria-hidden="true">
-                    <span class="white" [style.flex-grow]="move.white ?? 0"></span>
-                    <span class="draw" [style.flex-grow]="move.draws ?? 0"></span>
-                    <span class="black" [style.flex-grow]="move.black ?? 0"></span>
-                  </div>
-                  <div class="result-labels" aria-label="Resultats">
-                    <span class="white-label" [style.flex-grow]="move.white ?? 0">
-                      {{ move.white !== null ? (move.white | percent:'1.0-0') : '-' }}
-                    </span>
-                    <span class="draw-label" [style.flex-grow]="move.draws ?? 0">
-                      {{ move.draws !== null ? (move.draws | percent:'1.0-0') : '-' }}
-                    </span>
-                    <span class="black-label" [style.flex-grow]="move.black ?? 0">
-                      {{ move.black !== null ? (move.black | percent:'1.0-0') : '-' }}
-                    </span>
-                  </div>
-                </div>
-              </button>
+              </a>
             }
-          </article>
-        </div>
-      }
-
-      @if (result.masters_moves.length && activeExplorer() === 'masters') {
-        <div class="moves-scroll">
-          <article class="moves-table masters-table">
-            <div class="table-head">
-              <span>Coup</span>
-              <span>Parties</span>
-              <span>Resultat</span>
-            </div>
-            @for (move of result.masters_moves; track move.uci) {
-              <button
-                type="button"
-                class="move-row"
-                [attr.aria-label]="'Jouer le coup ' + move.san"
-                (mouseenter)="previewRecommendedMove(move)"
-                (mouseleave)="clearMovePreview()"
-                (focus)="previewRecommendedMove(move)"
-                (blur)="clearMovePreview()"
-                (click)="requestMove(move)"
-                >
-                <div class="move-name">
-                  <div class="move-line">
-                    <strong>{{ move.san }}</strong>
-                    @if (averageRatingLabel(move); as averageRating) {
-                      <small>{{ averageRating }}</small>
-                    }
-                  </div>
-                  @if (visibleBadges(move, 'masters').length) {
-                    <div class="badges">
-                      @for (badge of visibleBadges(move, 'masters'); track badge) {
-                        <span>{{ badge }}</span>
-                      }
-                    </div>
-                  }
-                  </div>
-                <span class="move-games">{{ formattedGames(move) }}</span>
-                <div class="result-cell">
-                  <div class="result-bar" aria-hidden="true">
-                    <span class="white" [style.flex-grow]="move.white ?? 0"></span>
-                    <span class="draw" [style.flex-grow]="move.draws ?? 0"></span>
-                    <span class="black" [style.flex-grow]="move.black ?? 0"></span>
-                  </div>
-                  <div class="result-labels" aria-label="Resultats">
-                    <span class="white-label" [style.flex-grow]="move.white ?? 0">
-                      {{ move.white !== null ? (move.white | percent:'1.0-0') : '-' }}
-                    </span>
-                    <span class="draw-label" [style.flex-grow]="move.draws ?? 0">
-                      {{ move.draws !== null ? (move.draws | percent:'1.0-0') : '-' }}
-                    </span>
-                    <span class="black-label" [style.flex-grow]="move.black ?? 0">
-                      {{ move.black !== null ? (move.black | percent:'1.0-0') : '-' }}
-                    </span>
-                  </div>
-                </div>
-              </button>
-            }
-          </article>
-        </div>
-      }
-
-      @if (activeExplorer() === 'lichess' && hasStats()) {
-        <article class="stats-card">
-          <h3>Position Lichess</h3>
-          <div class="result-bar large" aria-hidden="true">
-            <span class="white" [style.flex-grow]="result.lichess_stats.white"></span>
-            <span class="draw" [style.flex-grow]="result.lichess_stats.draws"></span>
-            <span class="black" [style.flex-grow]="result.lichess_stats.black"></span>
           </div>
-          <div class="stats-legend">
-            <span>Blancs {{ result.lichess_stats.white | percent }}</span>
-            <span>Nulles {{ result.lichess_stats.draws | percent }}</span>
-            <span>Noirs {{ result.lichess_stats.black | percent }}</span>
-          </div>
-        </article>
+        } @else {<p class="state">Aucune vidéo disponible pour cette position.</p>}
       }
-
-      @if (activeExplorer() === 'masters' && result.masters_stats.games > 0) {
-        <article class="stats-card masters-stats-card">
-          <h3>Position Masters</h3>
-          <div class="result-bar large" aria-hidden="true">
-            <span class="white" [style.flex-grow]="result.masters_stats.white"></span>
-            <span class="draw" [style.flex-grow]="result.masters_stats.draws"></span>
-            <span class="black" [style.flex-grow]="result.masters_stats.black"></span>
-          </div>
-          <div class="stats-legend">
-            <span>Blancs {{ result.masters_stats.white | percent }}</span>
-            <span>Nulles {{ result.masters_stats.draws | percent }}</span>
-            <span>Noirs {{ result.masters_stats.black | percent }}</span>
-          </div>
-        </article>
-      }
-
-      <article class="stockfish-card">
-        <h3>Stockfish</h3>
-        @if (stockfishLoading()) {
-          <p>Evaluation moteur en cours...</p>
-        } @else {
-          <p>{{ result.stockfish ? stockfishLabel() : 'Non appele sur cette position theorique.' }}</p>
-        }
-        @if (stockfishDetails(); as details) {
-          <p>{{ details }}</p>
-        }
-      </article>
-    </aside>
-  } @else if (loading()) {
-    <aside class="coach-column panel-card">
-      <p class="eyebrow">Coach IA</p>
-      <div class="state">Les donnees Explorer arrivent...</div>
-    </aside>
-    <aside class="explorer-column panel-card muted-panel">
-      <p class="eyebrow">Explorer</p>
-      <h2>Coups & stats</h2>
-      <div class="state">Chargement des statistiques Lichess...</div>
-    </aside>
+    </section>
   } @else {
-    <aside class="coach-column panel-card">
-      <p class="eyebrow">Coach IA</p>
-      <div class="state">Lance la demo ou joue un coup pour afficher l'analyse.</div>
-      <ol class="demo-guide">
-        <li>Choisis un niveau pedagogique.</li>
-        <li>Ajuste l'Elo Lichess seulement si tu veux filtrer les statistiques.</li>
-        <li>Compare les coups Lichess, Masters et Stockfish quand ils sont disponibles.</li>
-      </ol>
-    </aside>
-    <aside class="explorer-column panel-card muted-panel">
-      <p class="eyebrow">Lichess explorer</p>
-      <h2>Coups & stats</h2>
-      <div class="state">Les donnees apparaissent apres un coup.</div>
-    </aside>
+    <aside class="coach-column empty-coach panel-card"><p class="eyebrow">Coach IA</p>@if (error()) {<div class="state error">{{ error() }}</div>} @else if (loading()) {<div class="state">Les données Explorer arrivent...</div>} @else {<div class="state">Lance la démo ou joue un coup pour afficher l'analyse.</div><ol class="demo-guide"><li>Choisis un niveau pédagogique.</li><li>Joue un coup sur l'échiquier.</li></ol>}</aside>
+    <section class="tab-panel panel-card muted-panel"><p class="eyebrow">Explorer</p><h2>Coups &amp; statistiques</h2><div class="state">Les données apparaissent après un coup.</div></section>
   }
 </section>

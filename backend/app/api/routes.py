@@ -11,6 +11,7 @@ from backend.app.composition import (
     default_intent_router,
     default_opening_tree,
     default_stockfish_service,
+    default_youtube_client,
 )
 from backend.app.models.analysis import (
     AnalysisRunRequest,
@@ -24,6 +25,7 @@ from backend.app.models.analysis import (
     SessionResponse,
     StockfishRunResponse,
     StockfishEvaluateRequest,
+    VideosResponse,
 )
 from backend.app.services.analysis import (
     AnalysisRunNotFoundError,
@@ -41,6 +43,7 @@ from backend.app.services.opening_tree import OpeningTree
 from backend.app.services.rag import RagService
 from backend.app.services.session_store import SessionStore, get_session_store as _legacy_get_session_store, now_iso
 from backend.app.services.stockfish import StockfishService
+from backend.app.services.youtube import YouTubeClient, search_videos
 from backend.app.services.run_store import RunStore, get_run_store as _legacy_get_run_store
 from backend.app.orchestration.explorer_graph import (
     ExplorerGraphDependencies,
@@ -95,6 +98,11 @@ def get_stockfish_service(request: Request) -> StockfishService:
     return runtime.stockfish_service if runtime is not None else default_stockfish_service()
 
 
+def get_youtube_client(request: Request) -> YouTubeClient:
+    runtime = getattr(request.app.state, "runtime", None)
+    return runtime.youtube_client if runtime is not None else default_youtube_client()
+
+
 def get_opening_tree(request: Request) -> OpeningTree | None:
     runtime = getattr(request.app.state, "runtime", None)
     return runtime.opening_tree if runtime is not None else default_opening_tree()
@@ -109,11 +117,27 @@ LichessClientDep = Annotated[LichessExplorerClient, Depends(get_lichess_client)]
 CoachServiceDep = Annotated[CoachService, Depends(get_coach_service)]
 RagServiceDep = Annotated[RagService, Depends(get_rag_service)]
 RunStoreDep = Annotated[RunStore, Depends(get_run_store)]
+YouTubeClientDep = Annotated[YouTubeClient, Depends(get_youtube_client)]
 
 
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/api/videos", response_model=VideosResponse)
+def videos_endpoint(
+    opening: str,
+    level: str,
+    youtube_client: YouTubeClientDep,
+    cache_store: CacheStore = Depends(get_cache_store),
+) -> VideosResponse:
+    if not opening.strip():
+        raise HTTPException(status_code=422, detail="opening must not be empty")
+    if level not in {"debutant", "intermediaire", "avance"}:
+        raise HTTPException(status_code=422, detail="level must be debutant, intermediaire or avance")
+    videos, fallbacks, cache = search_videos(opening, level, youtube_client, cache_store)
+    return VideosResponse(videos=videos, fallbacks_used=fallbacks, cache=cache)
 
 
 @router.post("/api/analyze-position", response_model=AnalyzePositionResponse)
@@ -122,6 +146,7 @@ def analyze_position_endpoint(
     http_request: Request,
     lichess_client: LichessClientDep,
     run_store: RunStoreDep,
+    youtube_client: YouTubeClientDep,
     stockfish_service: StockfishService = Depends(get_stockfish_service),
     cache_store: CacheStore = Depends(get_cache_store),
     session_store: SessionStore = Depends(get_session_store),
@@ -138,6 +163,7 @@ def analyze_position_endpoint(
         rag_service=None,
         coach_service=None,
         run_store=run_store,
+        youtube_client=youtube_client,
     )
     if is_langgraph_enabled(http_request):
         return run_explorer_graph(request, dependencies)
@@ -152,6 +178,7 @@ def analyze_position_endpoint(
         dependencies.rag_service,
         dependencies.coach_service,
         dependencies.run_store,
+        youtube_client=youtube_client,
     )
 
 

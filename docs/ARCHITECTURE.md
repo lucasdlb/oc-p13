@@ -118,7 +118,7 @@ Reponse minimale de `POST /api/analyze-position` :
   "lichess_stats": {},
   "source_confidence": {},
   "rag_context": [],
-  "coach_explanation": "Le coach detaille est en cours de redaction...",
+  "coach_explanation": "",
   "coach_status": "pending",
   "run_id": "...",
   "analysis_key": "rnbqkbnr/...|debutant|1000,1200",
@@ -133,6 +133,8 @@ Reponse minimale de `POST /api/analyze-position` :
 ```
 
 `POST /api/stockfish/analyze-run` et `POST /api/rag-context` acceptent `{ "run_id": "..." }` et retournent leur payload avec leur statut. `POST /api/coach-explanation` accepte `{ "run_id": "...", "level": "debutant" }`, lit le run et retourne :
+
+`GET /api/videos?opening=...&level=...` retourne les ressources YouTube enrichies. Dans le workflow LangGraph, la recherche est executee dans le noeud Explorer pour que `POST /api/analyze-position` fournisse automatiquement les videos avec le snapshot initial.
 
 ```json
 {

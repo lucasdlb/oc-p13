@@ -20,6 +20,7 @@ Index de la documentation du POC. Chaque document a un role unique; les decision
 | Consulter le brief client brut | [`PROJECT.md`](PROJECT.md) |
 | Chercher un terme metier | [`GLOSSARY.md`](GLOSSARY.md) |
 | Comprendre visuellement des concepts | [`explainers/`](explainers/) |
+| Consulter l'étude de conception MCP vidéo | [`mcp-video-position-index.md`](mcp-video-position-index.md) |
 
 ## Pour Les Agents
 

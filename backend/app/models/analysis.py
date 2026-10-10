@@ -149,6 +149,18 @@ class Video(BaseModel):
     title: str
     url: str
     source: str
+    channel_title: str | None = None
+    thumbnail_url: str | None = None
+    published_at: str | None = None
+    description: str | None = None
+    duration_seconds: int | None = Field(default=None, ge=0)
+    view_count: int | None = Field(default=None, ge=0)
+
+
+class VideosResponse(BaseModel):
+    videos: list[Video] = Field(default_factory=list)
+    fallbacks_used: list[str] = Field(default_factory=list)
+    cache: str
 
 
 class AnalyzePositionResponse(BaseModel):
