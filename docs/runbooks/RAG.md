@@ -74,6 +74,10 @@ Le corpus complet nettoye est celui que sert maintenant la demo (`config.toml`).
 Milvus correspondante est construite depuis le snapshot complet et contient les pages Wikibooks
 mappees par noeud d'ouverture. Le corpus de treize pages reste disponible comme fixture de demarrage
 rapide ; il ne doit pas etre utilise comme collection runtime si une couverture complete est attendue.
+L'arbre structure `lichess-org/chess-openings` requis par le runtime est versionne dans
+`backend/app/data/opening-tree/`; le backend Docker le charge directement et ne depend pas de
+`.scratch/rag/corpus/opening-tree`. Regenerer cet artifact seulement apres mise a jour des TSV
+`chess-openings`, puis committer les trois fichiers `manifest.json`, `nodes.json` et `indexes.json`.
 Le corpus complet vit cote a cote avec son propre manifeste versionne :
 
 ```bash

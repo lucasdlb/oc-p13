@@ -879,7 +879,7 @@ def _fallback_rag_context(opening: Opening, text: str) -> RagContext:
 
 
 def _fallback_rag_contexts(opening: Opening, text: str, tree_context: OpeningTreeContext) -> list[RagContext]:
-    if tree_context.state != "matched" or opening.source == LICHESS_SOURCE:
+    if tree_context.state != "matched":
         return []
     return [_fallback_rag_context(opening, text)]
 

@@ -717,7 +717,7 @@ def test_out_of_theory_state_removes_lichess_fallback_rag_context() -> None:
     assert rag_response.json()["rag_context"] == []
 
 
-def test_lichess_opening_is_not_used_as_fallback_rag_context() -> None:
+def test_lichess_opening_is_used_as_fallback_rag_context_when_matched() -> None:
     app.dependency_overrides[get_lichess_client] = lambda: SuccessfulLichessClient()
 
     response = client.post(
@@ -732,7 +732,9 @@ def test_lichess_opening_is_not_used_as_fallback_rag_context() -> None:
     rag_response = client.post("/api/rag-context", json={"run_id": body["run_id"]})
 
     assert rag_response.status_code == 200
-    assert rag_response.json()["rag_context"] == []
+    rag_context = rag_response.json()["rag_context"]
+    assert rag_context[0]["source"] == "lichess-opening-explorer"
+    assert rag_context[0]["opening_name"] == "King's Pawn"
 
 
 def test_analyze_position_maps_retrieved_rag_context_with_source_attribution() -> None:

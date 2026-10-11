@@ -1,0 +1,42 @@
+{
+  "builder_version": 1,
+  "generated_at": "2026-10-11T20:25:21.453485+00:00",
+  "rows_skipped": 0,
+  "rows_total": 3815,
+  "rows_valid": 3815,
+  "schema_version": 1,
+  "skipped_rows": [],
+  "source": "lichess-org/chess-openings",
+  "source_files": {
+    "a.tsv": {
+      "rows_skipped": 0,
+      "rows_total": 817,
+      "rows_valid": 817,
+      "sha256": "41722fa3d44f294357326fe2ca1b956d9e56490b30efcfa68db61114c9df7e10"
+    },
+    "b.tsv": {
+      "rows_skipped": 0,
+      "rows_total": 772,
+      "rows_valid": 772,
+      "sha256": "310f0997d5a26ac6c9abfabac028e47e78f24356a6ba322cfffbf8f5a3f88d25"
+    },
+    "c.tsv": {
+      "rows_skipped": 0,
+      "rows_total": 1250,
+      "rows_valid": 1250,
+      "sha256": "b2e64f32e42e6418b327d03a55af65f3a18e762f7cbc0efffc7e9d1ed3aa7343"
+    },
+    "d.tsv": {
+      "rows_skipped": 0,
+      "rows_total": 614,
+      "rows_valid": 614,
+      "sha256": "58cad40b886bd499717eabcce281d4bfcf00eeadbdc00552f42042cf4aac50d2"
+    },
+    "e.tsv": {
+      "rows_skipped": 0,
+      "rows_total": 362,
+      "rows_valid": 362,
+      "sha256": "2787c571c16758343352be5a3e1272cb79af9ad32f20884ea6af982026efbe13"
+    }
+  }
+}

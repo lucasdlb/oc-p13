@@ -2,11 +2,22 @@ import json
 
 import pytest
 
-from backend.app.services.opening_tree import OpeningTree, OpeningTreeError, build_opening_tree_snapshot
+from backend.app.services.opening_tree import DEFAULT_OUTPUT_DIR, OpeningTree, OpeningTreeError, build_opening_tree_snapshot
 
 
 def _write_tsv(path, rows: list[str]) -> None:
     path.write_text("\n".join(["eco\tname\tpgn", *rows]), encoding="utf-8")
+
+
+def test_versioned_runtime_opening_tree_matches_common_openings() -> None:
+    tree = OpeningTree.from_snapshot_dir(DEFAULT_OUTPUT_DIR)
+
+    context = tree.context_for_position(moves=("e2e4", "e7e5"))
+
+    assert context.state == "matched"
+    assert context.current is not None
+    assert context.current.uci == ("e2e4", "e7e5")
+    assert context.current.depth == 2
 
 
 def test_build_opening_tree_snapshot_writes_versioned_artifacts(tmp_path) -> None:

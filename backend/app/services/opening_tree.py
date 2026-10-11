@@ -26,7 +26,7 @@ BUILDER_VERSION = 1
 SOURCE_NAME = "lichess-org/chess-openings"
 DEFAULT_CORPUS_DIR = Path(__file__).resolve().parents[3] / ".scratch" / "rag" / "corpus"
 DEFAULT_SOURCE_DIR = DEFAULT_CORPUS_DIR / "chess-openings"
-DEFAULT_OUTPUT_DIR = DEFAULT_CORPUS_DIR / "opening-tree"
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[1] / "data" / "opening-tree"
 _TSV_HEADER = ("eco", "name", "pgn")
 
 

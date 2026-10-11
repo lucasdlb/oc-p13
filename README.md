@@ -119,6 +119,10 @@ npm test -- --watch=false
 
 Les commandes d'ingestion, de benchmark et d'evaluation sont dans [`docs/runbooks/RAG.md`](docs/runbooks/RAG.md). Ne pas lancer l'ingestion pendant une demonstration.
 
+L'arbre structure des ouvertures requis au runtime est versionne dans `backend/app/data/opening-tree/`.
+Il permet au backend Docker de classifier les positions et de construire les plans RAG sans dependre de
+`.scratch/`. Les passages pedagogiques restent servis par Milvus et doivent etre ingeres separement.
+
 Le backend attend que la collection Milvus configuree dans `[milvus].collection` existe deja. Une
 stack Compose fraiche lance Milvus, mais ne peuple pas automatiquement cette collection. Avant une
 demo avec contexte RAG, preparer les donnees avec le runbook RAG, verifier la collection en lecture

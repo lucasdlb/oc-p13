@@ -130,27 +130,97 @@ base juridique appropriée. Le périmètre recommandé est de conserver :
 L'affichage intégré doit respecter les possibilités d'embed et les conditions
 de la plateforme. Un lien externe reste le fallback de référence.
 
-## 5. Architecture technique cible
+## 5. Technologies évaluées
+
+Cette étude ne retient pas une technologie unique comme solution miracle. La
+détection d'une position d'échecs dans une vidéo combine plusieurs problèmes :
+localiser l'échiquier, corriger la perspective, reconnaître les pièces,
+déduire l'orientation, produire une FEN et vérifier que la position est
+cohérente avec une partie ou une ouverture.
+
+### OpenCV et vision classique
+
+OpenCV est pertinent pour les premières étapes du pipeline : détection de
+contours, lignes, coins, homographie, correction de perspective et suivi entre
+frames proches. Les fonctions de calibration et de reconstruction 3D d'OpenCV
+documentent les modèles de caméra, la perspective et les transformations
+homographiques nécessaires pour rectifier un plan filmé de biais.
+
+Limites : les vidéos YouTube pédagogiques ne montrent pas toujours un échiquier
+physique net. Elles peuvent utiliser des overlays, animations, transitions,
+thèmes graphiques variés, pièces stylisées, zooms et recadrages. Une approche
+OpenCV pure risque donc d'être fragile dès que le rendu sort d'un cas contrôlé.
+
+### Modèles de vision spécialisés
+
+Les modèles de détection d'objet ou de segmentation peuvent localiser
+l'échiquier et les pièces avec plus de robustesse qu'une approche par contours.
+Un pipeline réaliste sépare généralement :
+
+- détection du plateau ou de ses quatre coins ;
+- rectification de l'image en grille 8x8 ;
+- classification de chaque case : vide ou pièce ;
+- orientation du plateau ;
+- conversion en FEN ;
+- validation déterministe avec `python-chess`.
+
+Cette option améliore la robustesse mais introduit un coût de dataset,
+d'entraînement ou d'intégration d'un modèle existant. Le risque principal est
+le faux positif silencieux : une FEN plausible mais fausse peut orienter le
+joueur vers un passage vidéo incorrect.
+
+### Transcription et métadonnées YouTube
+
+Les titres, descriptions, chapitres et sous-titres peuvent aider à détecter une
+ouverture, une variante ou un thème. Ils ne prouvent pas que la position exacte
+est visible au timestamp retourné. Ils sont donc utiles pour le ranking et le
+fallback, pas comme source de vérité pour la FEN.
+
+### Annotation humaine contrôlée
+
+Pour un POC, l'option la plus fiable est un catalogue réduit de vidéos validées
+manuellement : quelques timestamps associés à des FEN et à des niveaux de
+confiance. Cette approche ne démontre pas l'automatisation complète, mais elle
+valide le contrat produit : à partir d'une position, le système peut retourner
+une ressource vidéo utile, sourcee et bornée.
+
+### Choix recommandé
+
+La trajectoire recommandée est hybride : commencer par un catalogue curé,
+exposé via MCP, puis automatiser progressivement l'ingestion. OpenCV peut
+servir au cadrage et à la rectification, un modèle vision au board-to-FEN, et
+`python-chess` à la validation. La recherche textuelle YouTube reste le fallback
+tant que la couverture et la précision ne sont pas mesurées.
+
+## 6. Architecture technique cible
 
 ```mermaid
 flowchart LR
-    Y[YouTube Data API v3] --> D[Découverte des vidéos]
-    D --> M[(MongoDB métadonnées)]
-    D --> F[Extraction de frames]
-    F --> V[Modèle vision board-to-FEN]
-    V --> L[Validation FEN et score]
-    L --> I[(Index positions vidéo)]
+    subgraph Offline[Pipeline offline]
+        Y[YouTube Data API v3] --> D[Découverte vidéos]
+        D --> M[(MongoDB métadonnées)]
+        D --> F[Extraction frames]
+        F --> O[OpenCV: cadrage et homographie]
+        O --> V[Modèle vision board-to-FEN]
+        V --> L[Validation python-chess]
+        L --> Q[Score qualité et revue humaine]
+        Q --> I[(Index FEN / timestamp)]
+    end
 
-    P[Position courante FEN] --> B[Backend FastAPI]
-    B --> G[LangGraph]
-    G --> MCP[Serveur MCP vidéo]
-    MCP --> I
-    MCP --> M
-    I --> R[Résultats: URL + timestamp + confiance]
-    M --> R
-    R --> G
-    G --> B
-    B --> UI[Frontend Angular]
+    subgraph Runtime[Parcours utilisateur]
+        P[Position courante FEN] --> B[Backend FastAPI]
+        B --> G[LangGraph]
+        G --> C[Client MCP]
+        C --> MCP[Serveur FastMCP vidéo]
+        MCP --> I
+        MCP --> M
+        MCP --> R[Résultats: URL + timestamp + confiance]
+        R --> G
+        G --> B
+        B --> UI[Frontend Angular]
+    end
+
+    MCP --> Fallback[Fallback recherche YouTube textuelle]
 ```
 
 ### Composants
@@ -159,10 +229,12 @@ flowchart LR
 | --- | --- | --- |
 | Découverte YouTube | Rechercher les vidéos par ouverture et mots-clés | Appel externe |
 | Extracteur de frames | Échantillonner les images d'une vidéo | Batch asynchrone |
-| Modèle board-to-FEN | Détecter l'échiquier et produire une FEN | Vision |
+| OpenCV | Cadrage, homographie, rectification et prétraitement | Vision classique |
+| Modèle board-to-FEN | Détecter l'échiquier, les pièces et produire une FEN | Vision ML |
 | Validateur FEN | Vérifier la syntaxe et la cohérence minimale | Déterministe |
+| Revue qualité | Valider ou rejeter les correspondances à fort impact | Humain ou semi-auto |
 | Index positions vidéo | Associer FEN, vidéo, timestamp et confiance | MongoDB ou index dédié |
-| Serveur MCP | Exposer la recherche comme outil borné | Service interne |
+| Serveur FastMCP | Exposer la recherche comme outil borné | Service interne |
 | Noeud LangGraph | Appeler MCP selon les résultats Explorer | Orchestration |
 | Backend FastAPI | Contrat API, fallbacks et contrôle des sources | Application |
 | Frontend Angular | Afficher lien, timestamp et statut | Interface |
@@ -193,7 +265,7 @@ flowchart LR
    de confiance. Il ne présente pas le résultat comme une recommandation
    certaine lorsque le matching est approximatif.
 
-## 6. Interface MCP proposée
+## 7. Interface MCP proposée
 
 Le serveur MCP ne décide pas librement des sources critiques. Il expose des
 outils spécialisés, avec des paramètres bornés et des résultats structurés.
@@ -238,6 +310,20 @@ Cet outil sert de repli lorsque la FEN n'est pas indexée. Il effectue une
 recherche contrôlée par ouverture, niveau et mots-clés, puis retourne des liens
 YouTube sans prétendre qu'un timestamp correspond à la position exacte.
 
+### `get_video_index_status`
+
+Outil de diagnostic pour l'interface d'administration ou les tests. Il retourne
+la taille du catalogue, la date de dernière indexation, la version du modèle de
+vision, le nombre de vidéos en erreur et le taux de couverture par ouverture.
+Il ne doit pas exposer de clé API ni de chemins internes sensibles.
+
+### `submit_video_for_indexing`
+
+Outil optionnel, réservé à un usage administrateur. Il accepte un `video_id`
+YouTube déjà validé et le place dans une file d'ingestion. Il ne doit pas être
+appelé automatiquement par le coach en production : l'indexation est coûteuse,
+asynchrone et soumise aux droits et quotas.
+
 ### Règles de sécurité et de contrôle
 
 - `max_results` est plafonné côté serveur ;
@@ -246,8 +332,11 @@ YouTube sans prétendre qu'un timestamp correspond à la position exacte.
 - les URLs sont reconstruites à partir de l'identifiant YouTube validé ;
 - aucune donnée secrète ou clé API n'est exposée au modèle ou au frontend ;
 - le serveur retourne les raisons de fallback et les scores de confiance.
+- les outils d'administration sont protégés par une politique d'accès séparée ;
+- les appels MCP ont un timeout court et un résultat vide explicite en cas
+  d'indisponibilité.
 
-## 7. Intégration LangGraph
+## 8. Intégration LangGraph
 
 Le noeud LangGraph reste mince et délègue au service MCP. Il ne contient ni
 logique de vision, ni accès direct à YouTube, ni logique de persistance.
@@ -271,7 +360,7 @@ Le coach peut mentionner l'existence d'une ressource vidéo, mais il ne doit pas
 inventer son contenu. Le titre, la chaîne, le timestamp et le score doivent
 provenir du résultat validé.
 
-## 8. Étude de faisabilité
+## 9. Étude de faisabilité
 
 ### Faisabilité fonctionnelle
 
@@ -289,6 +378,20 @@ sans résoudre immédiatement l'indexation générale de YouTube.
 | POC 3 | 30 vidéos, validation manuelle, scores | Démonstration crédible de recherche par position |
 | V1 | Pipeline batch automatisé et monitoring | Catalogue maintenable |
 | V2 | Matching approximatif, transcription, thèmes | Recherche multimodale avancée |
+
+### Scénarios de réalisation
+
+| Scénario | Description | Faisabilité | Risque |
+| --- | --- | --- | --- |
+| Catalogue manuel | Timestamps et FEN saisis ou validés à la main sur 10 à 30 vidéos | Élevée | Couverture faible, effort humain |
+| Semi-automatique | Extraction frames, OpenCV, modèle vision, revue humaine | Moyenne | Qualité variable, besoin d'évaluation |
+| Automatisé large | Découverte YouTube, analyse automatique et ranking sans revue systématique | Faible à moyen terme | Faux positifs, coûts, conformité |
+
+Le scénario recommandé pour une première réalisation est le catalogue manuel
+exposé via MCP. Il valide l'expérience utilisateur et l'architecture sans
+prendre le risque d'une reconnaissance visuelle non maîtrisée. Le pipeline
+semi-automatique devient pertinent uniquement après constitution d'un jeu de
+référence et définition de métriques qualité.
 
 ### Hypothèse de charge POC
 
@@ -316,7 +419,7 @@ volume, au prix d'une étape supplémentaire.
 
 Ces seuils sont des objectifs de validation et non des performances garanties.
 
-## 9. Estimation des coûts
+## 10. Estimation des coûts
 
 Les montants ci-dessous sont des ordres de grandeur pour cadrer la décision,
 pas un devis. Ils dépendent du fournisseur cloud, du modèle de vision, du volume
@@ -334,6 +437,11 @@ de vidéos et du quota YouTube effectivement disponible.
 | Serveur MCP local | Processus Python conteneurisé | inclus dans l'infrastructure POC |
 | Développement POC | Contrat, index réduit, tests et démonstration | 3 à 6 jours.homme |
 
+Ce scénario correspond à un livrable démontrable mais volontairement limité. Il
+ne promet pas l'indexation automatique de YouTube : il prouve que le produit sait
+interroger un outil MCP vidéo et afficher un timestamp fiable lorsque le catalogue
+contient la position.
+
 ### Coûts d'une première version maintenable
 
 | Poste | Estimation indicative |
@@ -350,15 +458,106 @@ est plausible hors coût humain, selon l'hébergement et l'utilisation de GPU.
 Une indexation fréquente ou un catalogue volumineux peut dépasser largement
 ce montant.
 
+### Coûts d'une V1 plus ambitieuse
+
+| Poste | Hypothèse | Estimation indicative |
+| --- | --- | ---: |
+| Build backend MCP et contrats | FastMCP, outils bornés, tests, sécurité | 4 à 8 jours.homme |
+| Pipeline ingestion vidéo | files de jobs, reprise, logs, statuts | 5 à 10 jours.homme |
+| Vision board-to-FEN | intégration modèle, OpenCV, validation | 8 à 15 jours.homme |
+| Jeux de test et annotation | 100 à 300 positions annotées | 4 à 8 jours.homme |
+| UI et UX fallback | affichage confiance, timestamps, erreurs | 2 à 5 jours.homme |
+| Monitoring et exploitation | métriques, alertes, quotas, documentation | 2 à 5 jours.homme |
+| Total build V1 | hors recherche modèle longue | 25 à 51 jours.homme |
+
+Opex mensuel possible pour une V1 limitée :
+
+| Poste | Hypothèse | Opex mensuel |
+| --- | --- | ---: |
+| MongoDB ou base managée légère | catalogue et index | 0 à 80 EUR |
+| Stockage objets temporaire | frames, rapports d'ingestion | 0 à 50 EUR |
+| Compute CPU batch | ingestion ponctuelle | 10 à 100 EUR |
+| Compute GPU batch | si modèle vision lourd | 50 à 300 EUR |
+| Observabilité | logs et métriques simples | 0 à 50 EUR |
+| YouTube Data API | dans quota gratuit, quota à surveiller | 0 EUR direct au POC |
+| Total indicatif | selon volume et fréquence | 60 à 580 EUR/mois |
+
 ### Quota YouTube
 
-Le coût financier direct de l'API peut être nul dans le quota attribué au
-projet, mais le quota est une contrainte opérationnelle. Les recherches doivent
-être mises en cache, dédupliquées et exécutées en batch. Le chiffrage définitif
-doit être fait à partir de la console Google du projet et du nombre réel de
-requêtes `search.list` et `videos.list`.
+Le coût financier direct de l'API peut être nul dans le quota attribué au projet,
+mais le quota est une contrainte opérationnelle. La documentation YouTube Data
+API indique que chaque requête consomme du quota, que `videos.list` est peu
+coûteux et que `search.list` possède une limite quotidienne dédiée par défaut.
+Les recherches doivent donc être mises en cache, dédupliquées et exécutées en
+batch. Le chiffrage définitif doit être fait à partir de la console Google du
+projet et du nombre réel de requêtes `search.list` et `videos.list`.
 
-## 10. Recommandation de trajectoire
+## 11. Risques techniques et business
+
+| Risque | Type | Impact | Mitigation |
+| --- | --- | --- | --- |
+| FEN fausse mais plausible | Technique | Vidéo incorrecte présentée comme pertinente | score, validation, revue humaine, libellé approximatif |
+| Détection instable selon le style vidéo | Technique | Couverture faible | catalogue curé, mesure par chaîne, fallback textuel |
+| Coût GPU sous-estimé | Technique/opex | budget imprévisible | batch, échantillonnage, limites par vidéo |
+| Quota YouTube dépassé | Opérationnel | ingestion bloquée | cache, batch, déduplication, suivi quota |
+| Conditions YouTube mal respectées | Business/juridique | risque conformité | stocker métadonnées et timestamps, pas de réhébergement |
+| Valeur pédagogique insuffisante | Business | faible adoption | évaluation humaine, feedback utilisateur, catalogue ciblé |
+| Maintenance du catalogue | Business/produit | obsolescence ou liens morts | statut d'index, révalidation périodique |
+
+Le risque le plus critique n'est pas le coût d'infrastructure, mais la confiance
+utilisateur. Un jeune joueur doit comprendre si la vidéo correspond exactement à
+la position, à une variante proche ou seulement à l'ouverture. Le frontend doit
+donc afficher le type de correspondance et la confiance, pas seulement un lien.
+
+## 12. Alternatives étudiées
+
+### Alternative A : recherche YouTube textuelle enrichie
+
+Conserver le système actuel : recherche par ouverture, niveau et mots-clés,
+cache MongoDB, fallback visible. C'est l'option la moins coûteuse et la plus
+fiable à court terme, mais elle ne garantit pas le timestamp ni la position
+exacte.
+
+### Alternative B : catalogue curé avec timestamps
+
+Construire un petit catalogue de vidéos pédagogiques validées manuellement,
+avec FEN, ouverture, niveau, timestamp et commentaire. Le serveur MCP expose ce
+catalogue comme un outil standard. C'est la meilleure option pour démontrer la
+valeur produit avec un risque faible.
+
+### Alternative C : automatisation vision complète
+
+Déployer un pipeline board-to-FEN complet avec extraction de frames,
+prétraitement OpenCV, modèle vision et indexation automatique. Cette option est
+la plus ambitieuse et la plus scalable, mais elle doit être précédée d'un jeu de
+référence, d'une mesure de précision et d'un budget d'exploitation validé.
+
+## 13. Plan de développement recommandé
+
+| Phase | Durée indicative | Livrable | Critère go/no-go |
+| --- | ---: | --- | --- |
+| Phase 0 | 1 à 2 jours | catalogue manuel de 10 vidéos et contrat MCP | résultats utiles sur scénarios demo |
+| Phase 1 | 3 à 6 jours | serveur FastMCP + outil `search_video_by_fen` | intégration backend sans casser le fallback |
+| Phase 2 | 5 à 10 jours | pipeline ingestion semi-auto et revue humaine | précision FEN mesurée sur jeu annoté |
+| Phase 3 | 10 à 20 jours | modèle vision et monitoring qualité | faux positifs critiques sous seuil accepté |
+| Phase 4 | continu | extension catalogue et réindexation | coût opex stable et valeur utilisateur validée |
+
+La décision de passer de la phase 1 à la phase 2 doit dépendre d'une mesure
+simple : au moins 70 % des résultats retournés dans le top 3 doivent être jugés
+utiles par un évaluateur humain sur un jeu de positions représentatif.
+
+## 14. Références utilisées
+
+- Model Context Protocol : standard ouvert pour connecter des applications IA à
+  des outils, données et workflows externes.
+- FastMCP : framework Python pour exposer des fonctions comme outils MCP avec
+  schémas, validation, transport et cycle de vie.
+- OpenCV : bibliothèque de vision pour détection de contours, calibration,
+  homographies et transformations de perspective.
+- YouTube Data API v3 : découverte de vidéos, métadonnées et quotas à suivre
+  depuis la console Google Cloud.
+
+## 15. Recommandation de trajectoire
 
 ### Pour la démonstration actuelle
 
@@ -381,7 +580,7 @@ approximatif visible qu'après validation. Le fallback YouTube textuel doit rest
 disponible tant que la couverture et la précision du catalogue ne sont pas
 suffisantes.
 
-## 11. Conclusion
+## 16. Conclusion
 
 Le système MCP d'indexation vidéo par position répond au principal défaut de la
 recherche YouTube textuelle : elle ne sait pas localiser le passage utile dans
