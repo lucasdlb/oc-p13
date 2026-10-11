@@ -171,7 +171,7 @@ def test_trap_and_mistake_are_current_line_only() -> None:
 def test_unsupported_and_out_of_theory_do_not_retrieve_book_prose() -> None:
     unsupported = build_retrieval_plan(TREE, _decision("ask_unsupported"))
     out_of_theory = build_retrieval_plan(
-        OpeningTreeContext(state="out_of_theory", fallback_opening_name="Open Game"),
+        OpeningTreeContext(state="out_of_theory"),
         _decision("ask_out_of_theory"),
     )
 
@@ -204,7 +204,7 @@ def test_unclear_low_confidence_and_out_of_theory_are_conservative() -> None:
     unclear = build_retrieval_plan(TREE, _decision("unclear", confidence=0.9))
     low_confidence = build_retrieval_plan(TREE, _decision("ask_next_moves", confidence=0.4))
     out_of_theory = build_retrieval_plan(
-        OpeningTreeContext(state="out_of_theory", fallback_opening_name="Open Game"),
+        OpeningTreeContext(state="out_of_theory"),
         _decision("ask_next_moves", confidence=0.9),
     )
 
@@ -212,8 +212,26 @@ def test_unclear_low_confidence_and_out_of_theory_are_conservative() -> None:
     assert unclear.reason == "unclear_conservative"
     assert [bucket.name for bucket in low_confidence.buckets] == ["current"]
     assert low_confidence.reason == "low_confidence_conservative"
-    assert [bucket.name for bucket in out_of_theory.buckets] == ["fallback"]
-    assert out_of_theory.reason == "out_of_theory_conservative"
+    assert out_of_theory.buckets == ()
+    assert out_of_theory.reason == "out_of_theory_no_book_context"
+
+
+def test_out_of_theory_state_never_retrieves_opening_prose_for_standard_intents() -> None:
+    tree_context = OpeningTreeContext(state="out_of_theory")
+
+    for intent in ("explain_current_position", "ask_next_moves"):
+        plan = build_retrieval_plan(tree_context, _decision(intent))
+
+        assert plan.buckets == ()
+        assert plan.reason == "out_of_theory_no_book_context"
+
+
+def test_out_of_theory_question_keeps_intent_separate_and_requires_stockfish() -> None:
+    plan = build_retrieval_plan(OpeningTreeContext(state="out_of_theory"), _decision("ask_out_of_theory"))
+
+    assert plan.buckets == ()
+    assert plan.intent == "ask_out_of_theory"
+    assert plan.requires_stockfish is True
 
 
 def test_default_plans_always_exclude_deep_descendants() -> None:

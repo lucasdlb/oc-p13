@@ -200,6 +200,11 @@ class FakeOpeningTree:
         return OpeningTreeContext(current=RUY_TREE_NODE, children=(BERLIN_TREE_NODE,))
 
 
+class FakeOutOfTheoryOpeningTree:
+    def context_for_position(self, *, moves: tuple[str, ...], fen: str | None = None) -> OpeningTreeContext:
+        return OpeningTreeContext(state="out_of_theory")
+
+
 class FakeRagService:
     def __init__(self, result: RagRetrievalResult | None = None, *, fail: bool = False) -> None:
         self.result = result or RagRetrievalResult(contexts=())
@@ -687,6 +692,47 @@ def test_analyze_position_uses_lichess_opening_when_local_seed_unknown() -> None
     assert "opening_not_matched" not in body["fallbacks_used"]
     assert "demo_opening_seed" not in body["fallbacks_used"]
     assert "youtube_missing_api_key" in body["fallbacks_used"]
+
+
+def test_out_of_theory_state_removes_lichess_fallback_rag_context() -> None:
+    app.dependency_overrides[get_lichess_client] = lambda: SuccessfulLichessClient()
+    app.dependency_overrides[get_opening_tree] = lambda: FakeOutOfTheoryOpeningTree()
+    app.dependency_overrides[get_intent_router] = lambda: IntentRouter()
+    app.dependency_overrides[get_rag_service] = lambda: FakeRagService(RagRetrievalResult(contexts=()))
+
+    response = client.post(
+        "/api/analyze-position",
+        json=UNMATCHED_PAYLOAD,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["opening"]["source"] == "lichess-opening-explorer"
+    assert body["recommended_moves"][0]["source"] == "lichess-opening-explorer"
+    assert body["rag_context"] == []
+
+    rag_response = client.post("/api/rag-context", json={"run_id": body["run_id"]})
+
+    assert rag_response.status_code == 200
+    assert rag_response.json()["rag_context"] == []
+
+
+def test_lichess_opening_is_not_used_as_fallback_rag_context() -> None:
+    app.dependency_overrides[get_lichess_client] = lambda: SuccessfulLichessClient()
+
+    response = client.post(
+        "/api/analyze-position",
+        json=UNMATCHED_PAYLOAD,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["opening"]["source"] == "lichess-opening-explorer"
+
+    rag_response = client.post("/api/rag-context", json={"run_id": body["run_id"]})
+
+    assert rag_response.status_code == 200
+    assert rag_response.json()["rag_context"] == []
 
 
 def test_analyze_position_maps_retrieved_rag_context_with_source_attribution() -> None:

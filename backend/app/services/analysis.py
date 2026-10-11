@@ -39,6 +39,7 @@ from backend.app.services.rag import RagService
 from backend.app.services.retrieval_contracts import (
     CoachContext,
     OpeningTreeContext,
+    OpeningTreeNodeContext,
     RetrievedContext,
     RetrievalIntent,
     StockfishEval,
@@ -384,8 +385,8 @@ def retrieve_rag_for_run(
     fallbacks: list[str] = []
     intent = None
     if opening_tree is None or intent_router is None or rag_service is None:
-        rag_context = [_fallback_rag_context(facts.opening, fallback_text)]
         tree_context = _fallback_tree_context(facts.opening)
+        rag_context = _fallback_rag_contexts(facts.opening, fallback_text, tree_context)
         retrieved_contexts: tuple[RetrievedContext, ...] = ()
         fallbacks.append("rag_unavailable")
     else:
@@ -753,18 +754,22 @@ def _retrieve_rag_context(
     intent_router: IntentRouter | None,
     rag_service: RagService | None,
 ) -> tuple[list[RagContext], list[str], OpeningTreeContext, tuple[RetrievedContext, ...], RetrievalIntent | None]:
-    fallback_context = _fallback_rag_context(opening, fallback_text)
     fallback_tree_context = _fallback_tree_context(opening)
     if opening_tree is None or intent_router is None or rag_service is None:
-        return [fallback_context], [], fallback_tree_context, (), None
+        return _fallback_rag_contexts(opening, fallback_text, fallback_tree_context), [], fallback_tree_context, (), None
 
     try:
         tree_context = opening_tree.context_for_position(moves=tuple(request.moves), fen=request.fen)
+    except Exception:  # noqa: BLE001 - RAG must not break the analysis endpoint
+        return _fallback_rag_contexts(opening, fallback_text, fallback_tree_context), ["rag_unavailable"], fallback_tree_context, (), None
+
+    try:
         decision = intent_router.classify(_intent_context(request, tree_context))
         plan = build_retrieval_plan(tree_context, decision)
         result = rag_service.retrieve(plan, _rag_query(request, opening, tree_context))
     except Exception:  # noqa: BLE001 - RAG must not break the analysis endpoint
-        return [fallback_context], ["rag_unavailable"], fallback_tree_context, (), None
+        fallback_context = tree_context if tree_context.state != "matched" else fallback_tree_context
+        return _fallback_rag_contexts(opening, fallback_text, fallback_context), ["rag_unavailable"], fallback_context, (), None
 
     fallbacks = [
         *_intent_router_fallback_labels(decision.source),
@@ -772,15 +777,28 @@ def _retrieve_rag_context(
     ]
     contexts = [_retrieved_context_to_api(context) for context in result.contexts]
     if not contexts:
-        return [fallback_context], fallbacks, tree_context, (), plan.intent
+        return _fallback_rag_contexts(opening, fallback_text, tree_context), fallbacks, tree_context, (), plan.intent
 
     return contexts, fallbacks, tree_context, result.contexts, plan.intent
 
 
 def _fallback_tree_context(opening: Opening) -> OpeningTreeContext:
+    if opening.matched:
+        return OpeningTreeContext(
+            current=OpeningTreeNodeContext(
+                node_id=f"fallback-{opening.eco}",
+                eco_code=opening.eco,
+                opening_name=opening.name,
+                pgn="",
+                uci=(),
+                san=(),
+                fen="",
+                epd="",
+                depth=0,
+            )
+        )
     return OpeningTreeContext(
-        state="matched" if opening.matched else "out_of_theory",
-        fallback_opening_name=opening.name if opening.matched else None,
+        state="out_of_theory",
     )
 
 
@@ -813,12 +831,17 @@ def _rag_query(
     opening: Opening,
     tree_context: OpeningTreeContext,
 ) -> str:
-    parts = [
-        f"Opening: {opening.eco} {opening.name}",
-        f"Level: {request.level}",
-        f"PGN: {request.pgn}",
-        "Intent: explain plans and ideas for the current opening position",
-    ]
+    parts = [f"Level: {request.level}", f"PGN: {request.pgn}"]
+    if tree_context.state == "matched":
+        parts.extend([
+            f"Opening: {opening.eco} {opening.name}",
+            "Intent: explain plans and ideas for the current opening position",
+        ])
+    else:
+        parts.extend([
+            f"State: {tree_context.state}",
+            "Intent: explain the current chess position without opening-line context",
+        ])
     if request.question:
         parts.insert(0, f"Question: {request.question}")
     if tree_context.current is not None:
@@ -853,6 +876,12 @@ def _fallback_rag_context(opening: Opening, text: str) -> RagContext:
         opening_name=opening.name,
         eco_code=opening.eco,
     )
+
+
+def _fallback_rag_contexts(opening: Opening, text: str, tree_context: OpeningTreeContext) -> list[RagContext]:
+    if tree_context.state != "matched" or opening.source == LICHESS_SOURCE:
+        return []
+    return [_fallback_rag_context(opening, text)]
 
 
 def _rag_fallback_label(reason: str) -> str:

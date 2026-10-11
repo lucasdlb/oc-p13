@@ -19,7 +19,7 @@ def build_retrieval_plan(tree_context: OpeningTreeContext, decision: IntentDecis
             return _no_book_context(tree_context, decision.intent, "no_supported_theory_context")
         if decision.intent == "general_principle":
             return _root_general_principle(tree_context)
-        return RetrievalPlan.out_of_theory(tree_context=tree_context)
+        return _no_book_context(tree_context, decision.intent, "out_of_theory_no_book_context")
 
     if decision.confidence < LOW_CONFIDENCE:
         return _current_only(tree_context, decision.intent, "low_confidence_conservative")
@@ -185,12 +185,10 @@ def _current_only(tree_context: OpeningTreeContext, intent: RetrievalIntent, rea
 
 
 def _no_book_context(tree_context: OpeningTreeContext, intent: RetrievalIntent, reason: str) -> RetrievalPlan:
-    return RetrievalPlan(
+    return RetrievalPlan.no_book_context(
+        tree_context=tree_context,
         intent=intent,
-        state=tree_context.state,
         reason=reason,
-        buckets=(),
-        excluded_node_ids=tree_context.excluded_descendant_node_ids,
         requires_stockfish=intent == "ask_out_of_theory",
     )
 

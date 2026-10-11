@@ -8,6 +8,7 @@ import chess
 
 from backend.app.services.retrieval_contracts import (
     CoachContext,
+    CoachPositionContext,
     CoachProsePassage,
     CoachSourceAttribution,
     EvidencePack,
@@ -99,8 +100,7 @@ def build_prompt(context: CoachContext, level: str) -> str:
         "Question de l'utilisateur :",
         "",
         f"Niveau : {level}",
-        f"Ouverture : {position.opening_name or 'non identifiee'} ({position.eco_code or '?'})",
-        f"Ligne jouee : {position.pgn or position.fen or 'non disponible'}",
+        *_position_lines(position),
         "",
         "Passages sources :",
     ]
@@ -124,6 +124,11 @@ def build_prompt(context: CoachContext, level: str) -> str:
             "Aucun passage pedagogique fiable n'est disponible pour la position actuelle.",
             "Ne presentez pas d'idee d'ouverture comme issue d'une source absente.",
         ])
+    if position.state == "out_of_theory":
+        lines.extend([
+            "La position actuelle est hors theorie connue : n'expliquez pas une ouverture precedente comme contexte courant.",
+            "Utilisez seulement les faits fournis, notamment Stockfish si disponible.",
+        ])
     lines.extend([
         "",
         f"Consignes finales obligatoires : repondez en francais avec les {'quatre sections' if context.intent not in _QUESTION_INTENTS else 'quatre etapes demandees'}, entre 100 et 220 mots.",
@@ -139,6 +144,17 @@ def build_prompt(context: CoachContext, level: str) -> str:
             context.question,
         ])
     return "\n".join(lines)
+
+
+def _position_lines(position: CoachPositionContext) -> list[str]:
+    if position.state == "matched":
+        return [
+            f"Ouverture : {position.opening_name or 'non identifiee'} ({position.eco_code or '?'})",
+            f"Ligne jouee : {position.pgn or position.fen or 'non disponible'}",
+        ]
+    if position.state == "out_of_theory":
+        return ["Etat : position hors theorie connue"]
+    return ["Etat : position non supportee"]
 
 
 def build_evidence_pack(context: CoachContext) -> EvidencePack:

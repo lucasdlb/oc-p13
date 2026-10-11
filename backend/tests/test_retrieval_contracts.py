@@ -98,29 +98,20 @@ def test_retrieval_plan_can_express_history_only_retrieval() -> None:
     )
 
 
-def test_retrieval_plan_can_express_out_of_theory_conservative_retrieval() -> None:
-    tree_context = OpeningTreeContext(state="out_of_theory", current=None, fallback_opening_name="Open Game")
-    plan = RetrievalPlan.out_of_theory(tree_context=tree_context)
+def test_retrieval_plan_can_express_no_book_context() -> None:
+    tree_context = OpeningTreeContext(state="out_of_theory", current=None)
+    plan = RetrievalPlan.no_book_context(
+        tree_context=tree_context,
+        intent="ask_out_of_theory",
+        requires_stockfish=True,
+    )
 
     assert plan.to_artifact() == {
-        "intent": "unclear",
+        "intent": "ask_out_of_theory",
         "state": "out_of_theory",
-        "reason": "out_of_theory_conservative",
-        "requires_stockfish": False,
-        "buckets": [
-            {
-                "name": "fallback",
-                "relation_to_position": "fallback",
-                "node_ids": [],
-                "page_ids": [],
-                "eco_code": None,
-                "limit": 2,
-                "include_history": False,
-                "include_misc": False,
-                "entry_move": None,
-                "query_hint": "Open Game",
-            }
-        ],
+        "reason": "no_supported_theory_context",
+        "requires_stockfish": True,
+        "buckets": [],
         "excluded_node_ids": [],
     }
 
@@ -280,7 +271,6 @@ def test_coach_context_out_of_theory_makes_stockfish_authoritative() -> None:
         tree_context=OpeningTreeContext(
             state="out_of_theory",
             current=None,
-            fallback_opening_name="Italian and Spanish Game family",
         ),
         stockfish={"status": "ok", "best_move": "d2d4", "score": {"type": "cp", "value": 31}},
         fallbacks=("opening_not_matched", "stockfish_evaluation"),
@@ -290,7 +280,7 @@ def test_coach_context_out_of_theory_makes_stockfish_authoritative() -> None:
 
     assert artifact["current_position"] == {
         "state": "out_of_theory",
-        "opening_name": "Italian and Spanish Game family",
+        "opening_name": None,
         "eco_code": None,
         "pgn": None,
         "fen": None,

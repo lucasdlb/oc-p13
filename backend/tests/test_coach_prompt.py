@@ -90,6 +90,26 @@ def test_prompt_snapshot_keeps_grounding_sections_and_reference_syntax() -> None
     assert prompt.endswith("Quel est le plan ?")
 
 
+def test_prompt_marks_out_of_theory_state_without_opening_context() -> None:
+    context = _context().model_copy(
+        update={
+            "current_position": CoachPositionContext(
+                state="out_of_theory",
+                opening_name=None,
+                eco_code=None,
+                pgn=None,
+                fen=START_FEN,
+            )
+        }
+    )
+
+    prompt = build_prompt(context, "debutant")
+
+    assert "Etat : position hors theorie connue" in prompt
+    assert "Ouverture :" not in prompt
+    assert "n'expliquez pas une ouverture precedente comme contexte courant" in prompt
+
+
 @pytest.mark.parametrize(
     ("fen", "moves"),
     [

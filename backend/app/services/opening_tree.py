@@ -147,7 +147,6 @@ class OpeningTree:
         if current is None:
             return OpeningTreeContext(
                 state="out_of_theory" if moves or fen else "unsupported",
-                fallback_opening_name=self._fallback_opening_name(tuple(moves)),
             )
 
         window = self.window(current.node_id)
@@ -159,13 +158,6 @@ class OpeningTree:
             children=tuple(_node_context(child, entry_move=child.san[-1] if child.san else None) for child in window.children),
             excluded_descendant_node_ids=tuple(self._deep_descendants(current.node_id, direct_child_ids)),
         )
-
-    def _fallback_opening_name(self, moves: tuple[str, ...]) -> str | None:
-        for size in range(len(moves) - 1, 0, -1):
-            node = self.identify_by_uci(moves[:size])
-            if node is not None:
-                return node.name
-        return None
 
     def _deep_descendants(self, node_id: str, direct_children: set[str]) -> list[str]:
         deep: list[str] = []

@@ -60,7 +60,6 @@ class OpeningTreeContext(ContractModel):
     parent: OpeningTreeNodeContext | None = None
     children: tuple[OpeningTreeNodeContext, ...] = ()
     excluded_descendant_node_ids: tuple[str, ...] = ()
-    fallback_opening_name: str | None = None
 
     def to_artifact(self) -> dict:
         return {
@@ -69,7 +68,6 @@ class OpeningTreeContext(ContractModel):
             "parent": self.parent.to_artifact() if self.parent else None,
             "children": [child.to_artifact() for child in self.children],
             "excluded_descendant_node_ids": list(self.excluded_descendant_node_ids),
-            "fallback_opening_name": self.fallback_opening_name,
         }
 
 
@@ -131,22 +129,21 @@ class RetrievalPlan(ContractModel):
         )
 
     @classmethod
-    def out_of_theory(cls, *, tree_context: OpeningTreeContext) -> "RetrievalPlan":
+    def no_book_context(
+        cls,
+        *,
+        tree_context: OpeningTreeContext,
+        intent: RetrievalIntent = "unclear",
+        reason: str = "no_supported_theory_context",
+        requires_stockfish: bool = False,
+    ) -> "RetrievalPlan":
         return cls(
-            intent="unclear",
+            intent=intent,
             state=tree_context.state,
-            reason="out_of_theory_conservative",
+            reason=reason,
             excluded_node_ids=tree_context.excluded_descendant_node_ids,
-            requires_stockfish=False,
-            buckets=(
-                RetrievalBucket(
-                    name="fallback",
-                    relation_to_position="fallback",
-                    node_ids=(),
-                    limit=2,
-                    query_hint=tree_context.fallback_opening_name,
-                ),
-            ),
+            requires_stockfish=requires_stockfish,
+            buckets=(),
         )
 
     def to_artifact(self) -> dict:
@@ -217,7 +214,7 @@ class CoachPositionContext(ContractModel):
         current = tree_context.current
         return cls(
             state=tree_context.state,
-            opening_name=current.opening_name if current else tree_context.fallback_opening_name,
+            opening_name=current.opening_name if current else None,
             eco_code=current.eco_code if current else None,
             pgn=current.pgn if current else None,
             fen=current.fen if current else None,

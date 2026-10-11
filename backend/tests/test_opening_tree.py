@@ -230,7 +230,6 @@ def test_context_for_position_returns_safe_out_of_theory_context(tmp_path) -> No
     assert context.state == "out_of_theory"
     assert context.current is None
     assert context.children == ()
-    assert context.fallback_opening_name == "Open Game"
 
 
 def test_opening_tree_loader_rejects_missing_artifacts(tmp_path) -> None:
