@@ -8,7 +8,7 @@ fait pas partie du demarrage FastAPI et ne doit jamais etre lancee pendant une p
 - Docker Compose v2, Python 3.12 et `uv`.
 - Pour NVIDIA : pilote hote compatible et NVIDIA Container Toolkit/CDI configure pour Docker.
 - `.env` peut definir `MILVUS_URI` et `OLLAMA_BASE_URL`; les parametres non secrets restent dans
-  `config.toml`.
+  `config.toml`. En Compose, ces valeurs sont forcees vers les services Docker internes.
 - Le provider coach se choisit dans `config.toml` (`nvidia`, `ollama` ou `mistral`). Ajouter
   uniquement le secret correspondant dans `.env` (`NVIDIA_API_KEY` ou `MISTRAL_API_KEY`). Pydantic
   refuse un provider cloud sans son secret et refuse une cle cloud pour Ollama.

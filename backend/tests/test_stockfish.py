@@ -1,9 +1,9 @@
 import threading
 
-from backend.app.core.settings import StockfishSettings
 from backend.app.models.analysis import RecommendedMove
 from backend.app.services.stockfish_run import _run_if_needed
 from backend.app.services.stockfish import StockfishService
+from backend.tests.settings_factories import stockfish_settings
 
 
 def test_stockfish_service_parses_uci_evaluation(tmp_path) -> None:
@@ -19,7 +19,7 @@ def test_stockfish_service_parses_uci_evaluation(tmp_path) -> None:
     )
     engine.chmod(0o755)
 
-    result = StockfishService(StockfishSettings(binary=str(engine))).evaluate(
+    result = StockfishService(stockfish_settings(binary=str(engine))).evaluate(
         "rnbqkbnr/pppppppp/8/5N2/8/8/PPPPPPPP/RNBQKB1R b KQkq - 1 1"
     )
 
@@ -35,7 +35,7 @@ def test_stockfish_service_parses_uci_evaluation(tmp_path) -> None:
 
 
 def test_stockfish_service_reports_missing_binary() -> None:
-    result = StockfishService(StockfishSettings(binary="/opt/missing-stockfish")).evaluate(
+    result = StockfishService(stockfish_settings(binary="/opt/missing-stockfish")).evaluate(
         "rnbqkbnr/pppppppp/8/5N2/8/8/PPPPPPPP/RNBQKB1R b KQkq - 1 1"
     )
 
@@ -56,7 +56,7 @@ def test_stockfish_service_parses_multipv_and_normalizes_black_scores(tmp_path) 
     )
     engine.chmod(0o755)
 
-    result = StockfishService(StockfishSettings(binary=str(engine))).evaluate(
+    result = StockfishService(stockfish_settings(binary=str(engine))).evaluate(
         "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
         multipv=3,
     )

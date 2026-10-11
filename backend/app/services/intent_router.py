@@ -238,11 +238,11 @@ class JevIntentClassifier:
     def __init__(
         self,
         *,
-        settings: TypeSafeSettings | None = None,
+        settings: TypeSafeSettings,
         client: httpx.Client | None = None,
         allowed_intents: Sequence[RetrievalIntent] | None = None,
     ) -> None:
-        self._settings = settings or TypeSafeSettings()
+        self._settings = settings
         self._owns_client = client is None
         self._client = client or httpx.Client(timeout=self._settings.timeout_seconds)
         self._allowed_intents = tuple(

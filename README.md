@@ -11,7 +11,9 @@ How-to humain pour lancer et verifier le POC local. L'index de la documentation 
 
 ## Configuration
 
-Les parametres non secrets sont dans `config.toml`. Les secrets et valeurs liees a la machine restent dans `.env`.
+Les parametres non secrets sont dans `config.toml`. Ce fichier est obligatoire au demarrage : une
+cle configurable absente doit faire echouer la validation plutot que revenir a un defaut cache dans le
+code. Les secrets et valeurs liees a la machine restent dans `.env`.
 
 ```bash
 cp .env.example .env
@@ -38,6 +40,10 @@ puis generer une API key dans l'espace utilisateur. Copier la valeur dans `.env`
 fallback ou restera indisponible selon le chemin appele; les donnees Explorer, Stockfish et les
 fallbacks visibles restent demonstrables.
 
+`OLLAMA_BASE_URL` est une exception volontaire : elle configure les embeddings Ollama et surcharge
+`[llm.providers.ollama].base_url` quand `provider = "ollama"`, afin que Compose puisse pointer vers
+`http://ollama:11434` sans modifier `config.toml`.
+
 ## Lancer La Stack
 
 Mode demo Docker Compose complet :
@@ -45,6 +51,11 @@ Mode demo Docker Compose complet :
 ```bash
 docker compose up -d --build
 ```
+
+En mode Compose, le backend force `MONGODB_URI=mongodb://mongodb:27017`,
+`MILVUS_URI=http://milvus:19530` et `OLLAMA_BASE_URL=http://ollama:11434` pour joindre les services
+internes Docker. Ces trois valeurs remplacent silencieusement celles de `.env`; utiliser les variables
+de port de `.env.example` pour changer les ports exposes sur l'hote.
 
 Puis ouvrir `http://localhost:8080`. Le frontend Docker est servi par nginx et relaie `/api` vers le
 backend Docker.

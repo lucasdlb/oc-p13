@@ -9,7 +9,9 @@
 # Bitnami `bitnamilegacy/minio` (même API S3, credentials par défaut minioadmin)
 # en attendant une image S3 de remplacement. Voir docs/ARCHITECTURE.md.
 #
-# Env spécifiques (dev) dans .env : MONGODB_URI, MILVUS_URI, OLLAMA_BASE_URL.
+# Env specifiques (dev) dans .env : MONGODB_URI, MILVUS_URI, OLLAMA_BASE_URL.
+# Pour la demo Compose, le backend force ces trois valeurs vers les services
+# Docker internes; les valeurs equivalentes de .env sont donc ignorees.
 # La demo Docker expose le frontend sur localhost:8080 et l'API sur localhost:8000.
 
 services:
@@ -17,7 +19,7 @@ services:
     image: mongo:8
     container_name: p13-mongodb
     ports:
-      - "${MONGODB_PORT:-27017}:27017"
+      - "127.0.0.1:${MONGODB_PORT:-27017}:27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
@@ -32,7 +34,7 @@ services:
     image: ollama/ollama:0.40.0-rc5
     container_name: p13-ollama
     ports:
-      - "${OLLAMA_PORT:-11434}:11434"
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
     volumes:
       - ollama_models:/root/.ollama
     healthcheck:
@@ -95,8 +97,8 @@ services:
     volumes:
       - milvus_data:/var/lib/milvus
     ports:
-      - "${MILVUS_PORT:-19530}:19530"
-      - "${MILVUS_METRICS_PORT:-9091}:9091"
+      - "127.0.0.1:${MILVUS_PORT:-19530}:19530"
+      - "127.0.0.1:${MILVUS_METRICS_PORT:-9091}:9091"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 30s
@@ -123,7 +125,7 @@ services:
       MILVUS_URI: http://milvus:19530
       OLLAMA_BASE_URL: http://ollama:11434
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()"]
       interval: 10s
@@ -145,7 +147,7 @@ services:
       dockerfile: Dockerfile
     container_name: p13-frontend
     ports:
-      - "${FRONTEND_PORT:-8080}:80"
+      - "127.0.0.1:${FRONTEND_PORT:-8080}:80"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
       interval: 10s

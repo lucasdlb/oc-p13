@@ -3,7 +3,8 @@ import argparse
 import pytest
 from pydantic import ValidationError
 
-from backend.app.core.settings import EmbeddingsSettings, Settings
+from backend.app.core.settings import Settings
+from backend.tests.test_settings import _settings_config
 from experiments.rag import run
 
 
@@ -21,7 +22,7 @@ def _args(**overrides: object) -> argparse.Namespace:
 
 
 def test_load_settings_merges_env_aware_base_config_and_cli(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    base = Settings(embeddings=EmbeddingsSettings(base_url="http://from-env:11434"))
+    base = Settings.model_validate(_settings_config(embeddings={"base_url": "http://from-env:11434"}))
     monkeypatch.setattr(run, "get_settings", lambda: base)
 
     config = {"rag": {"k": 3, "granularity": "page"}}
@@ -33,14 +34,14 @@ def test_load_settings_merges_env_aware_base_config_and_cli(monkeypatch) -> None
 
 
 def test_load_settings_revalidates_invalid_override(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setattr(run, "get_settings", Settings)
+    monkeypatch.setattr(run, "get_settings", lambda: Settings.model_validate(_settings_config()))
 
     with pytest.raises(ValidationError):
         run._load_settings({}, _args(k=-1))
 
 
 def test_load_settings_rejects_invalid_granularity(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setattr(run, "get_settings", Settings)
+    monkeypatch.setattr(run, "get_settings", lambda: Settings.model_validate(_settings_config()))
 
     with pytest.raises(ValidationError):
         run._load_settings({}, _args(granularity="paragraph"))
@@ -82,7 +83,7 @@ def test_zero_wikibooks_limit_loads_no_sources(tmp_path) -> None:  # type: ignor
 
 
 def test_collection_name_is_deterministic_and_fingerprinted() -> None:
-    settings = Settings()
+    settings = Settings.model_validate(_settings_config())
     first = run._collection_name("section", settings, "corpus-a", "model@rev")
     again = run._collection_name("section", settings, "corpus-a", "model@rev")
     other_corpus = run._collection_name("section", settings, "corpus-b", "model@rev")
@@ -95,7 +96,7 @@ def test_collection_name_is_deterministic_and_fingerprinted() -> None:
 
 
 def test_collection_name_changes_with_wikibooks_cleaner(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    settings = Settings()
+    settings = Settings.model_validate(_settings_config())
     first = run._collection_name("section", settings, "corpus-a", "model@rev")
 
     monkeypatch.setattr(run, "WIKIBOOKS_CLEANER_VERSION", 999)
@@ -104,7 +105,7 @@ def test_collection_name_changes_with_wikibooks_cleaner(monkeypatch) -> None:  #
 
 
 def test_collection_name_changes_with_physical_index() -> None:
-    settings = Settings()
+    settings = Settings.model_validate(_settings_config())
     first = run._collection_name("section", settings, "corpus-a", "model@rev")
     changed = settings.model_copy(
         update={"milvus": settings.milvus.model_copy(update={"index_m": 32})}

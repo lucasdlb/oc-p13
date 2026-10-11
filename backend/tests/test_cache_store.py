@@ -1,6 +1,5 @@
 import chess
 
-from backend.app.core.settings import MongoSettings
 from backend.app.services.cache_store import (
     CacheStore,
     lichess_cache_key,
@@ -9,10 +8,12 @@ from backend.app.services.cache_store import (
     videos_cache_key,
 )
 from backend.tests.fakes import FakeDatabase
+from backend.tests.settings_factories import mongo_settings
 
 
-SETTINGS = MongoSettings(
+SETTINGS = mongo_settings(
     enabled=True,
+    uri="mongodb://localhost:27017",
     database="test",
     connect_timeout_seconds=0.05,
     lichess_cache_ttl_seconds=86400,

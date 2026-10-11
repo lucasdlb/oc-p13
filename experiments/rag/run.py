@@ -65,7 +65,7 @@ GOLDEN_SET_PATH = Path(__file__).with_name("golden_set.json")
 JUDGMENTS_PATH = Path(__file__).with_name("judgments.json")
 RUNS_DIR = Path(__file__).with_name("runs")
 DEFAULT_CORPUS_DIR = REPO_ROOT / ".scratch" / "rag" / "corpus"
-DEFAULT_MILVUS_URI = MilvusSettings().uri
+DEFAULT_MILVUS_URI = "http://localhost:19530"
 
 
 def main() -> int:
@@ -274,13 +274,9 @@ def _load_settings(config: dict, args: argparse.Namespace) -> Settings:
                 f"{section}.{key} is environment-specific and must be supplied through settings/env"
             )
 
-    merged = {
-        "embeddings": {**base.embeddings.model_dump(), **config.get("embeddings", {})},
-        "milvus": {**base.milvus.model_dump(), **config.get("milvus", {})},
-        "rag": {**base.rag.model_dump(), **config.get("rag", {})},
-        "llm": {**base.llm.model_dump(), **config.get("llm", {})},
-    }
-    merged["milvus"].pop("uri", None)
+    merged = base.model_dump()
+    for section in ("embeddings", "milvus", "rag", "llm"):
+        merged[section] = {**merged[section], **config.get(section, {})}
 
     if args.granularity is not None:
         merged["rag"]["granularity"] = args.granularity

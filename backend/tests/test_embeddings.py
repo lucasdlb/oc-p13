@@ -3,21 +3,17 @@ import json
 import httpx
 import pytest
 
-from backend.app.core.settings import EmbeddingsSettings
 from backend.app.services.embeddings import (
     EmbeddingProviderError,
     FakeEmbeddingProvider,
     OllamaEmbeddingProvider,
 )
-
-
-def _settings(**overrides: object) -> EmbeddingsSettings:
-    return EmbeddingsSettings(**overrides)  # type: ignore[arg-type]
+from backend.tests.settings_factories import embeddings_settings
 
 
 def _provider(handler, **overrides: object) -> OllamaEmbeddingProvider:
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    return OllamaEmbeddingProvider(_settings(**overrides), client=client)
+    return OllamaEmbeddingProvider(embeddings_settings(**overrides), client=client)
 
 
 def test_embed_documents_batches_requests() -> None:

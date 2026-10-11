@@ -1,7 +1,7 @@
 import pytest
 
 from backend.app.composition import RuntimeServices
-from backend.app.core.settings import Settings
+from backend.tests.settings_factories import app_settings
 from backend.app.main import create_app
 
 
@@ -78,6 +78,6 @@ def test_runtime_close_attempts_every_resource() -> None:
 
 
 def test_create_app_accepts_injected_settings() -> None:
-    app = create_app(Settings())
+    app = create_app(app_settings())
 
     assert app.title == "POC Agent d'ouvertures FFE"

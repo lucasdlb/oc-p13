@@ -1,6 +1,5 @@
 import json
 
-from backend.app.core.settings import MilvusSettings
 from backend.app.ingestion.cli import (
     _collection_name,
     _collection_provenance,
@@ -10,6 +9,7 @@ from backend.app.ingestion.cli import (
 )
 from backend.app.ingestion.snapshot import Snapshot
 from backend.app.services.opening_tree import OpeningTree, build_opening_tree_snapshot
+from backend.tests.settings_factories import milvus_settings
 
 
 def _snapshot() -> Snapshot:
@@ -83,7 +83,7 @@ def test_collection_provenance_records_snapshot_identity_separately() -> None:
 
 
 def test_no_ingest_uses_configured_collection_without_adding_fingerprint() -> None:
-    settings = MilvusSettings(collection="chess_knowledge_live_abc123")
+    settings = milvus_settings(collection="chess_knowledge_live_abc123")
 
     collection = _target_collection_name(
         settings,

@@ -1,9 +1,9 @@
 import httpx
 
-from backend.app.core.settings import YouTubeSettings
 from backend.app.services.cache_store import CacheStore
 from backend.app.services.youtube import YouTubeClient, search_videos
 from backend.tests.fakes import FakeDatabase
+from backend.tests.settings_factories import youtube_settings
 
 
 def test_youtube_client_maps_search_results() -> None:
@@ -43,7 +43,7 @@ def test_youtube_client_maps_search_results() -> None:
         )
 
     client = YouTubeClient(
-        YouTubeSettings(enabled=True, api_key="test-key"),
+        youtube_settings(enabled=True, api_key="test-key"),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -90,7 +90,7 @@ def test_search_videos_uses_cache_after_success() -> None:
         )
 
     client = YouTubeClient(
-        YouTubeSettings(enabled=True, api_key="test-key"),
+        youtube_settings(enabled=True, api_key="test-key"),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
     cache = CacheStore(FakeDatabase())
@@ -104,7 +104,7 @@ def test_search_videos_uses_cache_after_success() -> None:
 
 
 def test_youtube_client_returns_search_fallback_without_key() -> None:
-    client = YouTubeClient(YouTubeSettings(enabled=True))
+    client = YouTubeClient(youtube_settings(enabled=True))
 
     result = client.search("Ruy Lopez chess opening debutant")
 
@@ -132,7 +132,7 @@ def test_youtube_client_filters_short_videos() -> None:
         )
 
     client = YouTubeClient(
-        YouTubeSettings(enabled=True, api_key="test-key"),
+        youtube_settings(enabled=True, api_key="test-key"),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 

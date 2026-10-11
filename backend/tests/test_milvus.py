@@ -1,13 +1,13 @@
 import pytest
 
-from backend.app.core.settings import MilvusSettings
 from backend.app.models.knowledge import EmbeddedChunk, KnowledgeChunk
 from backend.app.services.milvus import MilvusMetadataFilter, MilvusStore, MilvusStoreError
+from backend.tests.settings_factories import milvus_settings
 
 
 @pytest.fixture
 def store(tmp_path) -> MilvusStore:  # type: ignore[no-untyped-def]
-    settings = MilvusSettings(
+    settings = milvus_settings(
         uri=str(tmp_path / "milvus.db"),
         collection="test_knowledge",
         dimension=4,
@@ -160,7 +160,7 @@ def test_search_combines_eco_and_metadata_filters_safely() -> None:
             return [[]]
 
     client = FakeClient()
-    store = MilvusStore(MilvusSettings(collection="c", dimension=4))
+    store = MilvusStore(milvus_settings(collection="c", dimension=4))
     store._client = client  # type: ignore[assignment]
     store._ensured = True
 
@@ -256,7 +256,7 @@ def test_search_uses_at_least_k_for_hnsw_ef() -> None:
             return [[]]
 
     client = FakeClient()
-    store = MilvusStore(MilvusSettings(collection="c", dimension=4, search_ef=2))
+    store = MilvusStore(milvus_settings(collection="c", dimension=4, search_ef=2))
     store._client = client  # type: ignore[assignment]
     store._ensured = True
 
@@ -275,7 +275,7 @@ def test_upsert_batches_rows(monkeypatch) -> None:  # type: ignore[no-untyped-de
 
     monkeypatch.setattr("backend.app.services.milvus._UPSERT_BATCH_SIZE", 2)
     client = FakeClient()
-    store = MilvusStore(MilvusSettings(collection="c", dimension=4))
+    store = MilvusStore(milvus_settings(collection="c", dimension=4))
     store._client = client  # type: ignore[assignment]
     store._ensured = True
 
@@ -323,7 +323,7 @@ def test_page_identity_and_ordering_round_trip(store: MilvusStore) -> None:
 
 
 def test_reusing_a_compatible_collection_succeeds(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    settings = MilvusSettings(uri=str(tmp_path / "m.db"), collection="c", dimension=4)
+    settings = milvus_settings(uri=str(tmp_path / "m.db"), collection="c", dimension=4)
 
     first = MilvusStore(settings, embedding_signature="model@rev")
     first.upsert([_embedded("a", "ruy lopez", [1.0, 0.0, 0.0, 0.0])])
@@ -337,7 +337,7 @@ def test_reusing_a_compatible_collection_succeeds(tmp_path) -> None:  # type: ig
 
 
 def test_collection_without_manifest_is_rejected(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    settings = MilvusSettings(uri=str(tmp_path / "m.db"), collection="c", dimension=4)
+    settings = milvus_settings(uri=str(tmp_path / "m.db"), collection="c", dimension=4)
     first = MilvusStore(settings, embedding_signature="model@rev")
     first.upsert([_embedded("a", "ruy lopez", [1.0, 0.0, 0.0, 0.0])])
     first.close()
@@ -352,7 +352,7 @@ def test_collection_without_manifest_is_rejected(tmp_path, monkeypatch) -> None:
 
 
 def test_read_only_store_does_not_create_a_missing_collection(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    settings = MilvusSettings(uri=str(tmp_path / "m.db"), collection="missing", dimension=4)
+    settings = milvus_settings(uri=str(tmp_path / "m.db"), collection="missing", dimension=4)
     read_only = MilvusStore(settings, create_if_missing=False)
     try:
         with pytest.raises(MilvusStoreError, match="does not exist"):
@@ -368,7 +368,7 @@ def test_read_only_store_does_not_create_a_missing_collection(tmp_path) -> None:
 
 
 def test_incompatible_embedding_signature_is_rejected(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    settings = MilvusSettings(uri=str(tmp_path / "m.db"), collection="c", dimension=4)
+    settings = milvus_settings(uri=str(tmp_path / "m.db"), collection="c", dimension=4)
 
     first = MilvusStore(settings, embedding_signature="model@rev1")
     first.upsert([_embedded("a", "ruy lopez", [1.0, 0.0, 0.0, 0.0])])
@@ -385,7 +385,7 @@ def test_incompatible_embedding_signature_is_rejected(tmp_path) -> None:  # type
 def test_legacy_schema_two_is_read_only_and_allowed_as_explicit_source(
     tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
-    settings = MilvusSettings(uri=str(tmp_path / "m.db"), collection="c", dimension=4)
+    settings = milvus_settings(uri=str(tmp_path / "m.db"), collection="c", dimension=4)
     first = MilvusStore(settings, embedding_signature="model@rev")
     first.upsert([_embedded("a", "ruy lopez", [1.0, 0.0, 0.0, 0.0])])
     legacy_manifest = {**first.manifest(), "schema_version": 2}
@@ -413,11 +413,11 @@ def test_legacy_schema_two_is_read_only_and_allowed_as_explicit_source(
 
 
 def test_incompatible_dimension_is_rejected(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    first = MilvusStore(MilvusSettings(uri=str(tmp_path / "m.db"), collection="c", dimension=4))
+    first = MilvusStore(milvus_settings(uri=str(tmp_path / "m.db"), collection="c", dimension=4))
     first.upsert([_embedded("a", "ruy lopez", [1.0, 0.0, 0.0, 0.0])])
     first.close()
 
-    second = MilvusStore(MilvusSettings(uri=str(tmp_path / "m.db"), collection="c", dimension=8))
+    second = MilvusStore(milvus_settings(uri=str(tmp_path / "m.db"), collection="c", dimension=8))
     try:
         with pytest.raises(MilvusStoreError):
             second.search([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], k=5)
@@ -426,7 +426,7 @@ def test_incompatible_dimension_is_rejected(tmp_path) -> None:  # type: ignore[n
 
 
 def test_search_ef_does_not_invalidate_stored_vectors(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    base = MilvusSettings(
+    base = milvus_settings(
         uri=str(tmp_path / "m.db"), collection="c", dimension=4, search_ef=32
     )
     first = MilvusStore(base, embedding_signature="model@rev")
@@ -445,7 +445,7 @@ def test_search_ef_does_not_invalidate_stored_vectors(tmp_path) -> None:  # type
 
 
 def test_collection_provenance_is_recorded_but_not_part_of_storage_fingerprint(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    settings = MilvusSettings(uri=str(tmp_path / "m.db"), collection="c", dimension=4)
+    settings = milvus_settings(uri=str(tmp_path / "m.db"), collection="c", dimension=4)
     provenance = {"snapshot_id": "wb-one", "snapshot_hash": "hash-one"}
     first = MilvusStore(settings, embedding_signature="model@rev", collection_provenance=provenance)
     first.upsert([_embedded("a", "ruy lopez", [1.0, 0.0, 0.0, 0.0])])
@@ -473,7 +473,7 @@ def test_collection_provenance_is_recorded_but_not_part_of_storage_fingerprint(t
 
 
 def test_text_over_the_utf8_byte_limit_is_rejected(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    settings = MilvusSettings(
+    settings = milvus_settings(
         uri=str(tmp_path / "m.db"), collection="c", dimension=4, max_text_length=10
     )
     store = MilvusStore(settings)

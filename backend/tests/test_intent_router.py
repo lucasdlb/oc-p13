@@ -6,6 +6,7 @@ import pytest
 import httpx
 
 from backend.app.core.settings import TypeSafeSettings
+from backend.tests.settings_factories import typesafe_settings
 
 from backend.app.services.intent_router import (
     _INTENTS,
@@ -295,7 +296,7 @@ def test_router_falls_back_when_primary_crashes_unexpectedly() -> None:
 
 
 def test_jev_classifier_disabled_by_default_routes_to_fallback() -> None:
-    decision = IntentRouter(primary=JevIntentClassifier()).classify(_context("Que jouer ?"))
+    decision = IntentRouter(primary=JevIntentClassifier(settings=typesafe_settings())).classify(_context("Que jouer ?"))
 
     assert decision.intent == "ask_next_moves"
     assert decision.source == "fallback_after_provider_error"
@@ -339,7 +340,7 @@ def test_jev_classifier_validates_provider_success_without_logging_secret(caplog
         )
 
     classifier = JevIntentClassifier(
-        settings=TypeSafeSettings(
+        settings=typesafe_settings(
             enabled=True,
             api_key="ts-key",
             base_url="https://gateway.example.test/typesafe",
@@ -402,7 +403,7 @@ def test_jev_classifier_routes_to_fallback_on_timeout() -> None:
         raise httpx.ReadTimeout("timed out")
 
     classifier = JevIntentClassifier(
-        settings=TypeSafeSettings(enabled=True, api_key="ts-key"),
+        settings=typesafe_settings(enabled=True, api_key="ts-key", base_url="https://gateway.example.test/typesafe"),
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -431,7 +432,7 @@ def test_jev_classifier_routes_to_fallback_on_invalid_response() -> None:
         )
 
     classifier = JevIntentClassifier(
-        settings=TypeSafeSettings(enabled=True, api_key="ts-key"),
+        settings=typesafe_settings(enabled=True, api_key="ts-key", base_url="https://gateway.example.test/typesafe"),
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -463,7 +464,7 @@ def test_jev_low_confidence_cannot_unlock_child_prose_intent() -> None:
         )
 
     classifier = JevIntentClassifier(
-        settings=TypeSafeSettings(enabled=True, api_key="ts-key"),
+        settings=typesafe_settings(enabled=True, api_key="ts-key", base_url="https://gateway.example.test/typesafe"),
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -474,7 +475,17 @@ def test_jev_low_confidence_cannot_unlock_child_prose_intent() -> None:
 
 
 def test_jev_enabled_without_key_routes_to_fallback() -> None:
-    classifier = JevIntentClassifier(settings=TypeSafeSettings(enabled=True, api_key=None))
+    classifier = JevIntentClassifier(
+        settings=TypeSafeSettings.model_construct(
+            enabled=True,
+            api_key=None,
+            base_url="https://gateway.example.test/typesafe",
+            model="jev-1.13.0",
+            timeout_seconds=5.0,
+            high_confidence=0.75,
+            medium_confidence=0.5,
+        )
+    )
 
     decision = IntentRouter(primary=classifier).classify(_context("Que jouer ?"))
 

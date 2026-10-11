@@ -13,6 +13,7 @@ timeout_seconds = 2.0
 
 [youtube]
 enabled = true
+base_url = "https://www.googleapis.com/youtube/v3"
 timeout_seconds = 2.0
 max_results = 3
 relevance_language = "fr"
@@ -84,6 +85,7 @@ model = "mistral-large-latest"
 
 [typesafe]
 enabled = false
+base_url = "https://api.typesafe.ai"
 model = "jev-latest"
 timeout_seconds = 5.0
 high_confidence = 0.75

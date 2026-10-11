@@ -1,13 +1,117 @@
 import logging
+from copy import deepcopy
+from pathlib import Path
+import tomllib
 
 import pytest
 
 from backend.app.core.settings import (
     Settings,
+    SettingsConfigError,
+    get_settings,
     _parse_dotenv_line,
     _without_config_secrets,
     _with_secret_env,
 )
+
+
+def _settings_config(**overrides):  # type: ignore[no-untyped-def]
+    config = {
+        "logging": {"level": "INFO", "format": "json", "request_id_header": "X-Request-ID"},
+        "orchestration": {"langgraph_enabled": True},
+        "lichess": {
+            "enabled": True,
+            "base_url": "https://explorer.lichess.org",
+            "timeout_seconds": 2.0,
+        },
+        "youtube": {
+            "enabled": True,
+            "base_url": "https://www.googleapis.com/youtube/v3",
+            "timeout_seconds": 2.0,
+            "max_results": 3,
+            "relevance_language": "fr",
+        },
+        "stockfish": {
+            "binary": "stockfish",
+            "depth": 12,
+            "depth_by_level": {"debutant": 12, "intermediaire": 16, "avance": 20},
+            "threads": 4,
+            "hash_mb": 128,
+            "timeout_seconds": 8.0,
+        },
+        "mongodb": {
+            "enabled": True,
+            "uri": "mongodb://localhost:27017",
+            "database": "chess_agent",
+            "connect_timeout_seconds": 1.5,
+            "lichess_cache_ttl_seconds": 86400,
+            "videos_cache_ttl_seconds": 604800,
+        },
+        "embeddings": {
+            "base_url": "http://localhost:11434",
+            "model": "qwen3-embedding:0.6b",
+            "dimension": 1024,
+            "batch_size": 32,
+            "keep_alive": "30m",
+            "query_instruction": "Given a web search query, retrieve relevant passages that answer the query",
+            "timeout_seconds": 120.0,
+        },
+        "milvus": {
+            "uri": "http://localhost:19530",
+            "collection": "chess_knowledge",
+            "metric_type": "COSINE",
+            "index_type": "HNSW",
+            "index_m": 16,
+            "index_ef_construction": 200,
+            "search_ef": 64,
+            "dimension": 1024,
+            "max_text_length": 8000,
+            "timeout_seconds": 10.0,
+        },
+        "rag": {"k": 5, "granularity": "section", "min_score": 0.0, "soft_eco_filter": True},
+        "llm": {
+            "provider": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "qwen2.5:7b-instruct",
+            "temperature": 0.2,
+            "max_tokens": 1000,
+            "num_ctx": 16384,
+            "think": False,
+            "keep_alive": "5m",
+            "timeout_seconds": 60.0,
+            "coach_timeout_seconds": 60.0,
+            "retries": 1,
+            "retry_backoff_seconds": 2.0,
+        },
+        "typesafe": {
+            "enabled": False,
+            "base_url": "https://api.typesafe.ai",
+            "model": "jev-latest",
+            "timeout_seconds": 5.0,
+            "high_confidence": 0.75,
+            "medium_confidence": 0.5,
+        },
+        "recommendations": {
+            "min_move_share": 0.001,
+            "min_position_games": 100,
+            "default_moves": 12,
+            "rating_presets": {
+                "debutant": {"min": 1000, "max": 1400},
+                "intermediaire": {"min": 1600, "max": 2000},
+                "avance": {"min": 2200, "max": 2500},
+            },
+        },
+    }
+    _deep_update(config, overrides)
+    return config
+
+
+def _deep_update(target: dict, updates: dict) -> None:
+    for key, value in updates.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_update(target[key], value)
+        else:
+            target[key] = value
 
 
 def test_strips_lichess_token_from_config(caplog) -> None:  # type: ignore[no-untyped-def]
@@ -89,7 +193,7 @@ def test_keeps_provider_base_urls_in_config(caplog) -> None:  # type: ignore[no-
     assert result["llm"]["base_url"] == "http://from-config:11434"
 
 
-def test_strips_typesafe_secret_and_environment_specific_base_url_from_config(caplog) -> None:  # type: ignore[no-untyped-def]
+def test_strips_typesafe_secret_but_keeps_base_url_from_config(caplog) -> None:  # type: ignore[no-untyped-def]
     config = {
         "typesafe": {
             "enabled": True,
@@ -102,9 +206,12 @@ def test_strips_typesafe_secret_and_environment_specific_base_url_from_config(ca
     with caplog.at_level(logging.WARNING, logger="backend.settings"):
         result = _without_config_secrets(config)
 
-    assert result["typesafe"] == {"enabled": True, "model": "jev-1.13.0"}
+    assert result["typesafe"] == {
+        "enabled": True,
+        "base_url": "https://gateway.example.test/typesafe",
+        "model": "jev-1.13.0",
+    }
     assert any("typesafe.api_key" in record.getMessage() for record in caplog.records)
-    assert any("typesafe.base_url" in record.getMessage() for record in caplog.records)
 
 
 def test_strips_llm_api_key_from_config(caplog) -> None:  # type: ignore[no-untyped-def]
@@ -160,23 +267,23 @@ def test_with_secret_env_sets_milvus_uri_and_ollama_embedding_url(monkeypatch) -
     assert "base_url" not in result.get("llm", {})
 
 
-def test_with_secret_env_sets_typesafe_api_key_and_base_url(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_with_secret_env_sets_typesafe_api_key(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     values = {
         "TYPESAFE_API_KEY": "ts-key",
-        "TYPESAFE_BASE_URL": "https://gateway.example.test/typesafe",
     }
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
-    monkeypatch.delenv("TYPESAFE_BASE_URL", raising=False)
     monkeypatch.setattr(
         "backend.app.core.settings._read_dotenv_value",
         lambda name: values.get(name),
     )
 
-    result = _with_secret_env({"typesafe": {"enabled": True}})
+    result = _with_secret_env(
+        {"typesafe": {"enabled": True, "base_url": "https://api.typesafe.ai"}}
+    )
 
     assert result["typesafe"]["enabled"] is True
     assert result["typesafe"]["api_key"] == "ts-key"
-    assert result["typesafe"]["base_url"] == "https://gateway.example.test/typesafe"
+    assert result["typesafe"]["base_url"] == "https://api.typesafe.ai"
 
 
 def test_with_secret_env_sets_selected_provider_secret(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -212,8 +319,8 @@ def test_with_secret_env_sets_selected_provider_secret(monkeypatch) -> None:  # 
     assert result["embeddings"]["base_url"] == "http://ollama:11434"
 
 
-def test_settings_expose_rag_defaults() -> None:
-    settings = Settings()
+def test_settings_load_explicit_config_values() -> None:
+    settings = Settings.model_validate(_settings_config())
 
     assert settings.embeddings.dimension == 1024
     assert settings.embeddings.model == "qwen3-embedding:0.6b"
@@ -227,7 +334,7 @@ def test_settings_expose_rag_defaults() -> None:
     assert settings.llm.base_url == "http://localhost:11434"
     assert settings.llm.provider == "ollama"
     assert settings.llm.api_key is None
-    assert settings.llm.num_ctx == 4096
+    assert settings.llm.num_ctx == 16384
     assert settings.llm.think is False
     assert settings.llm.keep_alive == "5m"
     assert settings.llm.seed is None
@@ -242,33 +349,40 @@ def test_settings_expose_rag_defaults() -> None:
 def test_provider_requires_its_own_secret() -> None:
     with pytest.raises(ValueError, match="nvidia provider"):
         Settings.model_validate(
-            {
-                "llm": {
+            _settings_config(
+                llm={
                     "provider": "nvidia",
                     "base_url": "https://integrate.api.nvidia.com/v1",
                     "model": "nvidia/test",
                 }
-            }
+            )
         )
 
 
 def test_ollama_rejects_a_cloud_api_key() -> None:
     with pytest.raises(ValueError, match="not valid for the ollama provider"):
         Settings.model_validate(
-            {
-                "llm": {
+            _settings_config(
+                llm={
                     "provider": "ollama",
                     "base_url": "http://localhost:11434",
                     "model": "qwen2.5:7b-instruct",
                     "api_key": "should-not-be-used",
                 }
-            }
+            )
         )
 
 
-def test_cloud_provider_gets_its_own_defaults() -> None:
+def test_cloud_provider_uses_explicit_provider_values() -> None:
     settings = Settings.model_validate(
-        {"llm": {"provider": "nvidia", "api_key": "nvidia-key"}}
+        _settings_config(
+            llm={
+                "provider": "nvidia",
+                "base_url": "https://integrate.api.nvidia.com/v1",
+                "model": "nvidia/nemotron-3-super-120b-a12b",
+                "api_key": "nvidia-key",
+            }
+        )
     )
 
     assert settings.llm.base_url == "https://integrate.api.nvidia.com/v1"
@@ -280,26 +394,58 @@ def test_cloud_provider_gets_its_own_defaults() -> None:
 
 def test_dimensions_must_match() -> None:
     with pytest.raises(ValueError, match="embeddings.dimension must match milvus.dimension"):
-        Settings.model_validate({"embeddings": {"dimension": 768}})
+        Settings.model_validate(_settings_config(embeddings={"dimension": 768}))
 
 
 def test_confidence_thresholds_must_be_ordered() -> None:
     with pytest.raises(ValueError, match="high_confidence"):
         Settings.model_validate(
-            {"typesafe": {"high_confidence": 0.4, "medium_confidence": 0.5}}
+            _settings_config(typesafe={"high_confidence": 0.4, "medium_confidence": 0.5})
         )
 
 
 def test_rating_preset_bounds_must_be_ordered() -> None:
     with pytest.raises(ValueError, match="min must be less than or equal to max"):
         Settings.model_validate(
-            {"recommendations": {"rating_presets": {"custom": {"min": 1800, "max": 1200}}}}
+            _settings_config(
+                recommendations={"rating_presets": {"custom": {"min": 1800, "max": 1200}}}
+            )
         )
 
 
 def test_unknown_settings_keys_are_rejected() -> None:
     with pytest.raises(ValueError, match="timout_seconds"):
-        Settings.model_validate({"stockfish": {"timout_seconds": 2}})
+        Settings.model_validate(_settings_config(stockfish={"timout_seconds": 2}))
+
+
+def test_get_settings_requires_config_file(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    get_settings.cache_clear()
+    missing = tmp_path / "missing.toml"
+    monkeypatch.setenv("CONFIG_PATH", str(missing))
+
+    with pytest.raises(SettingsConfigError, match="runtime config file not found"):
+        get_settings()
+
+    get_settings.cache_clear()
+
+
+def test_versioned_config_toml_is_valid(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    config_path = Path(__file__).resolve().parents[2] / "config.toml"
+    for name, value in {
+        "MONGODB_URI": "mongodb://localhost:27017",
+        "MILVUS_URI": "http://localhost:19530",
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "NVIDIA_API_KEY": "nvapi-test",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    with config_path.open("rb") as config_file:
+        config = _without_config_secrets(tomllib.load(config_file))
+
+    settings = Settings.model_validate(_with_secret_env(deepcopy(config)))
+
+    assert settings.llm.provider == "nvidia"
+    assert settings.youtube.base_url == "https://www.googleapis.com/youtube/v3"
 
 
 def test_keeps_config_without_lichess_token_unchanged() -> None:

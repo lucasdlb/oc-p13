@@ -3,7 +3,6 @@ import json
 import httpx
 import pytest
 
-from backend.app.core.settings import LLMSettings
 from backend.app.services.llm import (
     FakeLLMProvider,
     LLMProviderEmptyError,
@@ -13,18 +12,20 @@ from backend.app.services.llm import (
     OpenAICompatLLMProvider,
     OllamaLLMProvider,
 )
+from backend.tests.settings_factories import llm_settings
 
 
 def _provider(handler, **overrides: object) -> OllamaLLMProvider:
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    return OllamaLLMProvider(LLMSettings(**overrides), client=client)  # type: ignore[arg-type]
+    return OllamaLLMProvider(llm_settings(**overrides), client=client)
 
 
 def _openai_provider(handler, **overrides: object) -> OpenAICompatLLMProvider:
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    settings = LLMSettings(
+    settings = llm_settings(
             provider="mistral",
         base_url="https://api.mistral.ai/v1",
+        model="mistral-large-latest",
         api_key="mistral-test-key",
         **overrides,
     )

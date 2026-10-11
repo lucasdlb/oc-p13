@@ -1,8 +1,8 @@
 import httpx
 
-from backend.app.core.settings import LichessSettings
 from backend.app.models.analysis import Opening, RecommendedMove
 from backend.app.services.lichess import LichessExplorerClient
+from backend.tests.settings_factories import lichess_settings
 
 
 def test_lichess_client_maps_explorer_analysis() -> None:
@@ -26,7 +26,7 @@ def test_lichess_client_maps_explorer_analysis() -> None:
         )
 
     client = LichessExplorerClient(
-        LichessSettings(enabled=True, token="test-token"),
+        lichess_settings(enabled=True, token="test-token"),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -84,7 +84,7 @@ def test_lichess_client_maps_analysis_without_opening() -> None:
         )
 
     client = LichessExplorerClient(
-        LichessSettings(enabled=True, token="test-token"),
+        lichess_settings(enabled=True, token="test-token"),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -97,7 +97,7 @@ def test_lichess_client_maps_analysis_without_opening() -> None:
 
 
 def test_lichess_client_returns_seed_fallback_when_disabled() -> None:
-    client = LichessExplorerClient(LichessSettings(enabled=False))
+    client = LichessExplorerClient(lichess_settings(enabled=False))
 
     result = client.fetch_explorer_analysis(["e2e4"])
 
@@ -112,7 +112,7 @@ def test_lichess_client_returns_seed_fallback_when_token_is_missing() -> None:
         raise AssertionError("Lichess should not be called without a token")
 
     client = LichessExplorerClient(
-        LichessSettings(enabled=True, token=None),
+        lichess_settings(enabled=True, token=None),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -127,7 +127,7 @@ def test_lichess_client_returns_seed_fallback_on_http_error() -> None:
         return httpx.Response(500, json={"error": "unavailable"})
 
     client = LichessExplorerClient(
-        LichessSettings(enabled=True, token="test-token"),
+        lichess_settings(enabled=True, token="test-token"),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -143,7 +143,7 @@ def test_lichess_client_returns_specific_fallback_on_unauthorized() -> None:
         return httpx.Response(401, text="Unauthorized")
 
     client = LichessExplorerClient(
-        LichessSettings(enabled=True, token="test-token"),
+        lichess_settings(enabled=True, token="test-token"),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -158,7 +158,7 @@ def test_lichess_client_returns_seed_fallback_on_empty_stats() -> None:
         return httpx.Response(200, json={"white": 0, "draws": 0, "black": 0})
 
     client = LichessExplorerClient(
-        LichessSettings(enabled=True, token="test-token"),
+        lichess_settings(enabled=True, token="test-token"),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -173,7 +173,7 @@ def test_lichess_client_returns_seed_fallback_on_timeout() -> None:
         raise httpx.ReadTimeout("read timed out")
 
     client = LichessExplorerClient(
-        LichessSettings(enabled=True, token="test-token"),
+        lichess_settings(enabled=True, token="test-token"),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -185,7 +185,7 @@ def test_lichess_client_returns_seed_fallback_on_timeout() -> None:
 
 def test_lichess_client_uses_structured_timeout() -> None:
     with LichessExplorerClient(
-        LichessSettings(enabled=True, token="test-token", timeout_seconds=3.0)
+        lichess_settings(enabled=True, token="test-token", timeout_seconds=3.0)
     ) as client:
         timeout = client.http_client.timeout
 
@@ -197,7 +197,7 @@ def test_lichess_client_uses_structured_timeout() -> None:
 
 
 def test_lichess_client_closes_owned_http_client_on_exit() -> None:
-    with LichessExplorerClient(LichessSettings(enabled=True, token="test-token")) as client:
+    with LichessExplorerClient(lichess_settings(enabled=True, token="test-token")) as client:
         assert not client.http_client.is_closed
 
     assert client.http_client.is_closed
@@ -210,7 +210,7 @@ def test_lichess_client_keeps_injected_http_client_open_on_exit() -> None:
     http_client = httpx.Client(transport=httpx.MockTransport(handler))
 
     with LichessExplorerClient(
-        LichessSettings(enabled=True, token="test-token"),
+        lichess_settings(enabled=True, token="test-token"),
         http_client=http_client,
     ) as client:
         assert not client.http_client.is_closed
