@@ -10,6 +10,7 @@
 # en attendant une image S3 de remplacement. Voir docs/ARCHITECTURE.md.
 #
 # Env spécifiques (dev) dans .env : MONGODB_URI, MILVUS_URI, OLLAMA_BASE_URL.
+# La demo Docker expose le frontend sur localhost:8080 et l'API sur localhost:8000.
 
 services:
   mongodb:
@@ -106,6 +107,53 @@ services:
       etcd:
         condition: service_healthy
       minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: p13-backend
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017
+      MILVUS_URI: http://milvus:19530
+      OLLAMA_BASE_URL: http://ollama:11434
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    container_name: p13-frontend
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      backend:
         condition: service_healthy
     restart: unless-stopped
 
