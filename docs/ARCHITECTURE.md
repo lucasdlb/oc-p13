@@ -80,7 +80,6 @@ POST /api/stockfish/analyze-run
 POST /api/rag-context
 GET /api/analysis-runs/{run_id}/coach/stream
 POST /api/stockfish/evaluate
-GET /api/openings/{fen_or_epd}
 GET /api/videos
 POST /api/sessions
 GET /api/sessions/{id}
@@ -134,7 +133,11 @@ Reponse minimale de `POST /api/analyze-position` :
 
 `POST /api/stockfish/analyze-run` et `POST /api/rag-context` acceptent `{ "run_id": "..." }` et retournent leur payload avec leur statut. `POST /api/coach-explanation` accepte `{ "run_id": "...", "level": "debutant" }`, lit le run et retourne :
 
-`GET /api/videos?opening=...&level=...` retourne les ressources YouTube enrichies. Dans le workflow LangGraph, la recherche est executee dans le noeud Explorer pour que `POST /api/analyze-position` fournisse automatiquement les videos avec le snapshot initial.
+L'identification d'ouverture n'a pas d'endpoint public separe : elle fait partie de
+`POST /api/analyze-position`, qui retourne `opening`, les coups candidats, les statistiques et le
+`run_id`. `GET /api/videos?opening=...&level=...` retourne les ressources YouTube enrichies. Dans le
+workflow LangGraph, la recherche est executee dans le noeud Explorer pour que
+`POST /api/analyze-position` fournisse automatiquement les videos avec le snapshot initial.
 
 ```json
 {
@@ -163,10 +166,10 @@ Start
 +-- End
 ```
 
-Les services sont actuellement testes et appeles de maniere imperative. La cible LangGraph
-orchestrera ensuite des services deja stabilises, sans devenir le lieu ou la logique metier est cachee.
+Les services restent testes et implementes de maniere imperative. LangGraph orchestre les familles
+Explorer, RAG et Coach REST sans devenir le lieu ou la logique metier est cachee.
 
-Evolution actuelle (ADR 0009) : LangGraph orchestre deja les familles Explorer, RAG et Coach REST
+Implementation actuelle (ADR 0009) : LangGraph orchestre les familles Explorer, RAG et Coach REST
 dans un module dedie. Chaque graphe delegue aux services stabilises ; `RagService`, `CoachService`
 et les autres services n'importent pas `langgraph`. Les appels progressifs restent pilotes par l'UI
 et reutilisent `RunStore`/`CacheStore` dans MongoDB. Stockfish et le streaming coach conservent leur

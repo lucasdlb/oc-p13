@@ -31,6 +31,13 @@ Le provider, le modele et l'URL du coach sont choisis dans `[llm]` et `[llm.prov
 Ollama ne demande pas de secret. Les anciennes variables generiques `LLM_PROVIDER`,
 `LLM_BASE_URL` et `LLM_API_KEY` ne sont plus utilisees.
 
+Par defaut, `config.toml` utilise le provider `nvidia`. Pour obtenir une cle gratuite de demo, creer
+un compte sur NVIDIA Build (`https://build.nvidia.com/`), ouvrir un modele NIM compatible OpenAI,
+puis generer une API key dans l'espace utilisateur. Copier la valeur dans `.env` sous
+`NVIDIA_API_KEY=nvapi-...` avant de demarrer le backend. Sans cle valide, le coach LLM passera en
+fallback ou restera indisponible selon le chemin appele; les donnees Explorer, Stockfish et les
+fallbacks visibles restent demonstrables.
+
 ## Lancer La Stack
 
 Mode demo Docker Compose complet :
@@ -101,6 +108,12 @@ npm test -- --watch=false
 
 Les commandes d'ingestion, de benchmark et d'evaluation sont dans [`docs/runbooks/RAG.md`](docs/runbooks/RAG.md). Ne pas lancer l'ingestion pendant une demonstration.
 
+Le backend attend que la collection Milvus configuree dans `[milvus].collection` existe deja. Une
+stack Compose fraiche lance Milvus, mais ne peuple pas automatiquement cette collection. Avant une
+demo avec contexte RAG, preparer les donnees avec le runbook RAG, verifier la collection en lecture
+seule, puis lancer la demo. Si la collection est absente ou incomplete, le RAG se degrade en fallback
+visible et le coach dispose de moins de contexte pedagogique.
+
 ## Documentation
 
 Commencer par [`docs/README.md`](docs/README.md), puis suivre le parcours correspondant a la question. Les regles de travail pour les agents sont dans [`AGENTS.md`](AGENTS.md) et [`docs/AGENT_CONTEXT.md`](docs/AGENT_CONTEXT.md).
@@ -108,6 +121,7 @@ Commencer par [`docs/README.md`](docs/README.md), puis suivre le parcours corres
 Pour comprendre rapidement le projet:
 
 - Architecture et contrats : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- Script de demo : [`docs/DEMO.md`](docs/DEMO.md)
 - Donnees, sources et licences : [`docs/data/`](docs/data/)
 - Evaluation RAG : [`docs/RAG-EVALUATION.md`](docs/RAG-EVALUATION.md)
 - Decisions : [`docs/adr/`](docs/adr/)

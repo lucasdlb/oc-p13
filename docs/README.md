@@ -7,6 +7,7 @@ Index de la documentation du POC. Chaque document a un role unique; les decision
 | Besoin | Document |
 | --- | --- |
 | Lancer le projet, configurer l'environnement, tester | [`../README.md`](../README.md) |
+| Preparer la video de demonstration | [`DEMO.md`](DEMO.md) |
 | Comprendre le produit et ses criteres d'acceptation | [`MVP.md`](MVP.md) |
 | Comprendre l'architecture et les contrats API | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | Comprendre les donnees, sources, caches et licences | [`data/`](data/) |
@@ -48,9 +49,10 @@ la cible acceptee.
 - [`adr/0010-bounded-agentic-investigation-tool.md`](adr/0010-bounded-agentic-investigation-tool.md): investigation bornee.
 - [`adr/0011-evidence-pack-and-claim-verifier.md`](adr/0011-evidence-pack-and-claim-verifier.md): preuves et verification des claims.
 
-L'ADR 0009 est une decision de cible acceptee, mais LangGraph n'est pas encore cable dans le
-runtime. Les ADR 0010 et 0011 sont actuellement des propositions de conception; elles ne decrivent
-pas des composants deja presents dans le runtime.
+L'ADR 0009 est implementee comme orchestration mince : LangGraph est cable pour les familles
+Explorer, RAG et Coach REST, tandis que les services metier restent imperatifs et testables. Les ADR
+0010 et 0011 sont actuellement des propositions de conception; elles ne decrivent pas des composants
+deja presents dans le runtime.
 
 ## Organisation
 
