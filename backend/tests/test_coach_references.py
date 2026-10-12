@@ -75,6 +75,16 @@ def test_sanitizer_normalizes_valid_move_labels_to_san() -> None:
     assert sanitized == "Jouez [[move:uci=b1c3,label=Nc3]]."
 
 
+def test_sanitizer_preserves_move_number_labels_containing_san() -> None:
+    sanitized = sanitize_coach_references(
+        "### [[move:uci=g7g6,label=2...g6]]",
+        fen="rnbqkbnr/pppppppp/8/5n2/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3 0 2",
+        allowed_moves={"g7g6"},
+    )
+
+    assert sanitized == "### [[move:uci=g7g6,label=2...g6]]"
+
+
 def test_sanitizer_keeps_unsupported_empty_labels_visible() -> None:
     sanitized = sanitize_coach_references(
         "Coup indisponible [[move:uci=e2e4,label=]].",
