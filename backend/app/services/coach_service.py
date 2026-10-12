@@ -127,12 +127,16 @@ def prepare_coach_output(text: str, context: CoachContext) -> CoachResult:
         logger.warning("coach prose contains potentially illegal SAN citations: %s", illegal_citations)
     index = MoveIndex.from_context(context)
     allowed_moves = {record.uci for record in index.records}
-    sanitized = sanitize_coach_references(text, fen=context.current_position.fen, allowed_moves=allowed_moves)
+    sanitized = _normalize_coach_headings(
+        sanitize_coach_references(text, fen=context.current_position.fen, allowed_moves=allowed_moves)
+    )
+    sanitized = _compact_clickable_headings(sanitized)
     if index.board is None:
         return CoachResult(_ensure_markdown_list_spacing(sanitized))
     enriched = annotate_references(sanitized, index)
+    enriched = _compact_move_lines(enriched)
     enriched = _ensure_markdown_list_spacing(enriched)
-    if "[[" in enriched:
+    if re.search(r"\[\[(?:move|line):", enriched):
         return CoachResult(enriched)
     fallback = _interactive_reference_fallback(index)
     return CoachResult(f"{enriched}\n\n{fallback}" if fallback else enriched)
@@ -140,6 +144,57 @@ def prepare_coach_output(text: str, context: CoachContext) -> CoachResult:
 
 def _ensure_markdown_list_spacing(text: str) -> str:
     return re.sub(r"(?m)((?:^\s*[-*] .+\n)+)(?=\S)", r"\1\n", text)
+
+
+def _normalize_coach_headings(text: str) -> str:
+    heading_map = {
+        "idee cle": "Idée clé",
+        "idée clé": "Idée clé",
+        "idee principale": "Idée clé",
+        "idée principale": "Idée clé",
+        "idee clef": "Idée clé",
+        "idée clef": "Idée clé",
+        "idee clefs": "Idée clé",
+        "idée clefs": "Idée clé",
+        "idee cle": "Idée clé",
+        "idée cle": "Idée clé",
+        "coups a regarder": "Coups à regarder",
+        "coups à regarder": "Coups à regarder",
+    }
+
+    def replace_heading(match: re.Match[str]) -> str:
+        hashes = match.group("hashes") or "##"
+        raw_title = " ".join(match.group("title").lower().split())
+        title = heading_map.get(raw_title, match.group("title"))
+        level = hashes if hashes.startswith("##") else "##"
+        return f"{level} {title}"
+
+    return re.sub(
+        r"(?im)^\s*(?P<hashes>#{1,6}\s+)?(?P<title>idee clef?s?|idée clef?s?|idee clé|idée clé|idee principale|idée principale|coups a regarder|coups à regarder)\s*:\s*$",
+        replace_heading,
+        text,
+    )
+
+
+def _compact_clickable_headings(text: str) -> str:
+    text = re.sub(
+        r"(?m)^\s*#{3,6}\s+(?P<reference>\[\[(?:move|line):[^\[\]]+\]\])\s*\n\s*(?P<explanation>(?![#>*-])\S[^\n]*)",
+        r"- \g<reference> : \g<explanation>",
+        text,
+    )
+    return re.sub(
+        r"(?m)^\s*#{3,6}\s+(?P<reference>\[\[(?:move|line):[^\[\]]+\]\])\s*$",
+        r"- \g<reference>",
+        text,
+    )
+
+
+def _compact_move_lines(text: str) -> str:
+    return re.sub(
+        r"(?m)^\s*(?P<reference>\[\[(?:move|line):[^\[\]]+\]\])\s*:\s*(?P<explanation>\S[^\n]*)$",
+        r"- \g<reference> : \g<explanation>",
+        text,
+    )
 
 
 def sanitize_coach_output(text: str, context: CoachContext) -> str:
@@ -201,7 +256,7 @@ def _interactive_reference_fallback(index: MoveIndex) -> str:
     first = index.records[0]
     destination = first.uci[2:4]
     return (
-        "Références interactives :\n"
-        f"- Coup : [[move:uci={first.uci},label={first.san}]]\n"
-        f"- Case cible : [[square:sq={destination},label={destination}]]"
+        "Références interactives : "
+        f"[[move:uci={first.uci},label={first.san}]] · "
+        f"[[square:sq={destination},label={destination}]]"
     )

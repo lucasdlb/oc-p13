@@ -45,10 +45,8 @@ class MoveIndex:
             return cls(None, tuple(_candidate_records(context)))
 
         candidates = [str(_value(move, "uci") or "") for move in context.recommended_moves]
-        if context.stockfish:
-            best = _value(context.stockfish, "best_move")
-            if best:
-                candidates.append(str(best))
+        candidates.extend(str(_value(move, "uci") or "") for move in context.masters_moves)
+        candidates.extend(_stockfish_move_uci(context.stockfish))
         candidates.extend(
             continuation.entry_uci
             for continuation in context.candidate_continuations
@@ -218,6 +216,11 @@ def _find_move_match(text: str, token: str) -> re.Match[str] | None:
     for match in re.finditer(pattern, text, re.IGNORECASE):
         if _UCI_TOKEN_PATTERN.fullmatch(token):
             return match
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        line_prefix = text[line_start:match.start()]
+        line_suffix = text[match.end():]
+        if re.fullmatch(r"\s*(?:[-*]\s*)?", line_prefix) and re.match(r"\s*:", line_suffix):
+            return match
         prefix = text[:match.start()].rstrip("* ")
         if re.search(r"(?:jouer|joue|coup|si|regardez|suite|ou|,)\s*$|\d+\.(?:\.\.)?$", prefix, re.IGNORECASE):
             return match
@@ -260,10 +263,16 @@ def _repair_label(reference: CoachReference, board: chess.Board | None) -> Coach
     move = chess.Move.from_uci(reference.uci)
     if board.is_legal(move):
         san = board.san(move)
+        if _label_contains_san(reference.label, san):
+            return reference
         if reference.label.startswith("..."):
             san = f"...{san}"
         return replace(reference, label=san)
     return reference
+
+
+def _label_contains_san(label: str, san: str) -> bool:
+    return bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(san)}(?![A-Za-z0-9])", label, re.IGNORECASE))
 
 
 def _is_legal_sequence(board: chess.Board, moves: tuple[str, ...]) -> bool:
@@ -292,15 +301,29 @@ def _parse_simple_attributes(body: str, *, required: str) -> dict[str, str] | No
 def _candidate_records(context: CoachContext) -> list[MoveRecord]:
     candidates: list[tuple[str, str]] = [
         (str(_value(move, "san") or "?"), str(_value(move, "uci") or ""))
-        for move in context.recommended_moves
+        for move in (*context.recommended_moves, *context.masters_moves)
     ]
     if context.stockfish:
-        best = _value(context.stockfish, "best_move")
-        if best:
-            candidates.append(("?", str(best)))
+        candidates.extend(("?", uci) for uci in _stockfish_move_uci(context.stockfish))
     candidates.extend((continuation.entry_move, continuation.entry_uci or "") for continuation in context.candidate_continuations)
     seen: set[str] = set()
     return [MoveRecord(uci, san) for san, uci in candidates if uci and not (uci in seen or seen.add(uci))]
+
+
+def _stockfish_move_uci(stockfish: object) -> list[str]:
+    if not stockfish:
+        return []
+    candidates: list[str] = []
+    best = _value(stockfish, "best_move")
+    if isinstance(best, str) and best:
+        candidates.append(best)
+    variations = _value(stockfish, "variations")
+    if isinstance(variations, (list, tuple)):
+        for variation in variations[:3]:
+            move = _value(variation, "best_move")
+            if isinstance(move, str) and move:
+                candidates.append(move)
+    return list(dict.fromkeys(candidates))
 
 
 def _label(value: str | None, fallback: str) -> str:

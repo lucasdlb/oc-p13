@@ -15,6 +15,7 @@ from backend.app.services.retrieval_contracts import (
     CoachPositionContext,
     CoachProsePassage,
     CoachSourceAttribution,
+    StockfishEval,
 )
 
 
@@ -233,6 +234,61 @@ def test_llm_coach_annotates_numbered_san_mentions_every_time() -> None:
     assert explanation.count("[[move:uci=g8f6,label=Nf6]]") == 1
 
 
+def test_llm_coach_annotates_san_move_bullets_after_scandinavian_exchange() -> None:
+    context = replace(
+        _context(),
+        current_position=replace(
+            _context().current_position,
+            fen="rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2",
+        ),
+        recommended_moves=[
+            {"san": "Qxd5", "uci": "d8d5"},
+            {"san": "Nf6", "uci": "g8f6"},
+            {"san": "c6", "uci": "c7c6"},
+        ],
+    )
+    response = "Qxd5 : Reprendre la dame centrale.\nNf6 : Developper le cavalier.\nc6 : Preparer le centre."
+
+    explanation = LlmCoachService(provider=FakeLLMProvider(response=response)).explain(
+        context,
+        level="debutant",
+    ).text
+
+    assert "- [[move:uci=d8d5,label=Qxd5]] : Reprendre la dame centrale." in explanation
+    assert "- [[move:uci=g8f6,label=Nf6]] : Developper le cavalier." in explanation
+    assert "- [[move:uci=c7c6,label=c6]] : Preparer le centre." in explanation
+
+
+def test_prepare_coach_output_keeps_all_stockfish_variation_references() -> None:
+    context = replace(
+        _context(),
+        current_position=replace(
+            _context().current_position,
+            fen="rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2",
+        ),
+        stockfish=StockfishEval.model_validate({
+            "status": "ok",
+            "best_move": "d8d5",
+            "variations": [
+                {"best_move": "d8d5"},
+                {"best_move": "g8f6"},
+                {"best_move": "c7c6"},
+            ],
+        }),
+    )
+
+    result = prepare_coach_output(
+        "- [[move:uci=d8d5,label=Qxd5]] : Reprise par la dame.\n"
+        "- [[move:uci=g8f6,label=Nf6]] : Developpement du cavalier.\n"
+        "- [[move:uci=c7c6,label=c6]] : Soutien du centre.",
+        context,
+    )
+
+    assert "[[move:uci=d8d5,label=Qxd5]]" in result.text
+    assert "[[move:uci=g8f6,label=Nf6]]" in result.text
+    assert "[[move:uci=c7c6,label=c6]]" in result.text
+
+
 def test_llm_coach_distinguishes_square_mentions_from_move_mentions() -> None:
     context = replace(
         _context(),
@@ -289,17 +345,46 @@ def test_llm_coach_prompt_includes_recommended_moves_and_structure() -> None:
     assert prompt.startswith("QUESTION DE L'UTILISATEUR A TRAITER EN PRIORITE :\nPourquoi jouer Nf3 ici ?")
     assert prompt.endswith("Rappel prioritaire : repondez d'abord a la question de l'utilisateur :\nPourquoi jouer Nf3 ici ?")
     assert "repondez-y en priorite" in system
-    assert "Plan simple" in system
-    assert "Idee principale" in system
+    assert "Plan simple" not in system
+    assert "Idee cle" in system
     assert "Coups a regarder" in system
-    assert "Conclusion :" in system
+    assert "Conclusion :" not in system
     assert "strictement en francais" in system
+    assert "Ne citez jamais les statistiques chiffrees" in system
+    assert "chaque coup doit etre une puce Markdown compacte" in system
     assert "Consignes finales obligatoires" in prompt
-    assert "[[move:uci=e7e5,label=e5]]" in prompt
-    assert "entre 100 et 220 mots" in prompt
-    assert "chaque coup en une courte phrase" in prompt
-    assert "label SAN exact" in prompt
+    assert "- [[move:uci=e7e5,label=e5]]" in prompt
+    assert "entre 70 et 140 mots" in prompt
+    assert "Ne recopiez aucun chiffre statistique" in prompt
     assert prompt.rfind("Consignes finales obligatoires") > prompt.rfind("e5 (e7e5)")
+
+
+def test_llm_coach_prompt_requests_compact_clickable_move_bullets_without_stat_recital() -> None:
+    provider = FakeLLMProvider(response="Explication.")
+    context = replace(
+        _context(),
+        current_position=replace(
+            _context().current_position,
+            fen="rnbqkbnr/pppppppp/8/5n2/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3 0 2",
+        ),
+        recommended_moves=[
+            {"san": "g6", "uci": "g7g6", "move_share": 0.305, "games": 305},
+            {"san": "e6", "uci": "e7e6", "move_share": 0.273, "games": 273},
+            {"san": "d5", "uci": "d7d5", "move_share": 0.182, "games": 182},
+            {"san": "c6", "uci": "c7c6", "move_share": 0.01, "games": 10},
+        ],
+    )
+
+    LlmCoachService(provider=provider).explain(context, level="debutant")
+
+    prompt = provider.prompts[0]
+    system = provider.systems[0]
+    assert "- [[move:uci=g7g6,label=...g6]]" in prompt
+    assert "- [[move:uci=e7e6,label=...e6]]" in prompt
+    assert "- [[move:uci=d7d5,label=...d5]]" in prompt
+    assert "c7c6" not in prompt.split("Coups autorises pour les titres cliquables", 1)[1]
+    assert "pas de pourcentages" in system
+    assert "le coup le plus joue" in system
 
 
 def test_llm_coach_bounds_long_source_passages_before_prompting() -> None:
@@ -424,6 +509,50 @@ def test_prepare_coach_output_with_missing_fen_has_no_interactive_markers() -> N
     result = prepare_coach_output("[[move:uci=e7e5,label=e5]] e5", context)
 
     assert "[[" not in result.text
+
+
+@pytest.mark.parametrize("heading", ["Idée cle", "Idée clef", "Idée clefs", "Idee cle"])
+def test_prepare_coach_output_normalizes_idea_heading_variants(heading: str) -> None:
+    result = prepare_coach_output(f"{heading} :\nUne idée utile.", _context())
+
+    assert result.text == "## Idée clé\nUne idée utile."
+
+
+def test_prepare_coach_output_compacts_clickable_move_heading() -> None:
+    context = replace(
+        _context(),
+        current_position=replace(
+            _context().current_position,
+            fen="rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        ),
+        recommended_moves=[{"san": "e5", "uci": "e7e5"}],
+    )
+
+    result = prepare_coach_output(
+        "### [[move:uci=e7e5,label=e5]]\nAccepte le centre.",
+        context,
+    )
+
+    assert result.text == "- [[move:uci=e7e5,label=e5]] : Accepte le centre."
+
+
+def test_prepare_coach_output_adds_move_fallback_when_only_square_reference_exists() -> None:
+    context = replace(
+        _context(),
+        current_position=replace(
+            _context().current_position,
+            fen="rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        ),
+        recommended_moves=[{"san": "e5", "uci": "e7e5"}],
+    )
+
+    result = prepare_coach_output(
+        "La case e5 est importante [[square:sq=e5,label=e5]].",
+        context,
+    )
+
+    assert "[[square:sq=e5,label=e5]]" in result.text
+    assert "[[move:uci=e7e5,label=e5]]" in result.text
 
 
 def test_prepare_coach_output_is_idempotent() -> None:

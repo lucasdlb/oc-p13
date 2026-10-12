@@ -86,7 +86,7 @@ def test_prompt_snapshot_keeps_grounding_sections_and_reference_syntax() -> None
         "Ligne jouee : 1. e4",
     ]
     assert "Coups autorises (UCI obligatoire dans les marqueurs) :" in prompt
-    assert "- e4 -> e2e4" in prompt
+    assert "- [[move:uci=e2e4,label=e4]]" in prompt
     assert prompt.endswith("Quel est le plan ?")
 
 

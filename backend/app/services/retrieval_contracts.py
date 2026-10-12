@@ -388,6 +388,8 @@ class EvidencePack(ContractModel):
     position: CoachPositionContext
     lichess_stats: dict | None = None
     explorer_moves: tuple[RecommendedMove, ...] = ()
+    masters_stats: dict | None = None
+    masters_moves: tuple[RecommendedMove, ...] = ()
     stockfish: StockfishEval | None = None
 
 
@@ -401,6 +403,8 @@ class CoachContext(ContractModel):
     source_attributions: tuple[CoachSourceAttribution, ...] = ()
     lichess_stats: dict | None = None
     recommended_moves: tuple[RecommendedMove, ...] = ()
+    masters_stats: dict | None = None
+    masters_moves: tuple[RecommendedMove, ...] = ()
     stockfish: StockfishEval | None = None
     fallbacks: tuple[str, ...] = ()
 
@@ -430,6 +434,10 @@ class CoachContext(ContractModel):
         }
         if self.supporting_prose:
             artifact["supporting_prose"] = [passage.to_artifact() for passage in self.supporting_prose]
+        if self.masters_stats is not None:
+            artifact["masters_stats"] = self.masters_stats
+        if self.masters_moves:
+            artifact["masters_moves"] = [move.model_dump() for move in self.masters_moves]
         if self.intent is not None:
             artifact["intent"] = self.intent
         return artifact
@@ -442,11 +450,15 @@ class CoachContext(ContractModel):
 def build_coach_context(
     *,
     tree_context: OpeningTreeContext,
+    current_fen: str | None = None,
+    current_pgn: str | None = None,
     question: str | None = None,
     intent: RetrievalIntent | None = None,
     retrieved_contexts: tuple[RetrievedContext, ...] = (),
     lichess_stats: dict | None = None,
     recommended_moves: list[dict] | tuple[RecommendedMove, ...] | None = None,
+    masters_stats: dict | None = None,
+    masters_moves: list[dict] | tuple[RecommendedMove, ...] | None = None,
     stockfish: dict | StockfishEval | None = None,
     fallbacks: tuple[str, ...] = (),
 ) -> CoachContext:
@@ -504,8 +516,14 @@ def build_coach_context(
         for entry_move, passages in child_prose_by_move.items()
     )
 
+    current_position = CoachPositionContext.from_tree_context(tree_context)
+    if current_fen:
+        current_position = current_position.model_copy(
+            update={"fen": current_fen, "pgn": current_pgn or current_position.pgn}
+        )
+
     return CoachContext(
-        current_position=CoachPositionContext.from_tree_context(tree_context),
+        current_position=current_position,
         question=question,
         intent=intent,
         current_prose=tuple(current_prose),
@@ -514,6 +532,8 @@ def build_coach_context(
         source_attributions=tuple(source_attributions_by_id.values()),
         lichess_stats=lichess_stats,
         recommended_moves=tuple(RecommendedMove.model_validate(move) for move in (recommended_moves or ())),
+        masters_stats=masters_stats,
+        masters_moves=tuple(RecommendedMove.model_validate(move) for move in (masters_moves or ())),
         stockfish=stockfish if isinstance(stockfish, StockfishEval) else StockfishEval.model_validate(stockfish) if stockfish else None,
         fallbacks=fallbacks,
     )

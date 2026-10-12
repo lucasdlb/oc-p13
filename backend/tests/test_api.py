@@ -1,7 +1,9 @@
 import asyncio
+import json
 import logging
 import threading
 from collections.abc import Iterator
+from dataclasses import replace as dataclass_replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -853,7 +855,7 @@ def test_analyze_position_question_can_trigger_next_move_child_retrieval() -> No
     assert rag_response.json()["rag_context"][0]["relation_to_position"] == "child"
     assert rag_response.json()["rag_context"][0]["entry_move"] == "Nf6"
     coach = _fetch_coach(body["session_id"], body["analysis_key"], "intermediaire")
-    assert "Si le camp au trait joue Nf6" in coach["explanation"]
+    assert "Si les Noirs jouent" in coach["explanation"]
     assert "After ...Nf6, the Berlin is a possible continuation." in coach["explanation"]
     assert "Dans la position actuelle" not in coach["explanation"]
 
@@ -1333,8 +1335,74 @@ def test_coach_stream_emits_tokens_and_persists_the_complete_text() -> None:
         json={"run_id": body["run_id"], "level": "debutant"},
     )
     assert replay.status_code == 200
-    assert replay.json()["explanation"] == "Explication progressive. [source: seed, demo]"
+    assert replay.json()["explanation"].startswith("Explication progressive. [source: seed, demo]")
+    assert "[[move:uci=e7e5,label=e5]]" in replay.json()["explanation"]
     assert len(provider.prompts) == 1
+
+
+def test_two_successive_coach_questions_keep_clickable_refs_in_done() -> None:
+    class TwoMovesClient(SuccessfulLichessClient):
+        def fetch_explorer_analysis(self, _moves: list[str]) -> LichessExplorerResult:
+            result = super().fetch_explorer_analysis(_moves)
+            return dataclass_replace(
+                result,
+                recommended_moves=(
+                    *result.recommended_moves,
+                    RecommendedMove(
+                        uci="d7d5",
+                        san="d5",
+                        description="Alternative centrale.",
+                        source="lichess-opening-explorer",
+                        games=30,
+                        white=0.5,
+                        draws=0.1,
+                        black=0.4,
+                    ),
+                ),
+            )
+
+    def done_payload(stream: str) -> dict:
+        for event in stream.split("\n\n"):
+            if "event: done" not in event:
+                continue
+            data_line = next(line for line in event.splitlines() if line.startswith("data: "))
+            return json.loads(data_line.removeprefix("data: "))
+        raise AssertionError("SSE done event not found")
+
+    provider = FakeLLMProvider(
+        responses=[
+            "Idée clé\n[[move:uci=e7e5,label=e5]] : jouer au centre.",
+            "Idée clé\n[[move:uci=d7d5,label=d5]] : contester le centre.",
+        ]
+    )
+    app.dependency_overrides[get_lichess_client] = lambda: TwoMovesClient()
+    app.dependency_overrides[get_coach_service] = lambda: LlmCoachService(provider=provider)
+
+    first = _post_analysis({
+        "fen": KINGS_PAWN_FEN,
+        "pgn": "1. e4",
+        "moves": ["e2e4"],
+        "level": "debutant",
+        "question": "Quel est le meilleur coup ?",
+    })
+    with client.stream("GET", f"/api/analysis-runs/{first['run_id']}/coach/stream") as response:
+        first_done = done_payload("".join(response.iter_text()))
+
+    second = _post_analysis({
+        "fen": KINGS_PAWN_FEN,
+        "pgn": "1. e4",
+        "moves": ["e2e4"],
+        "level": "debutant",
+        "question": "Et si je veux une réponse plus dynamique ?",
+        "session_id": first["session_id"],
+    })
+    with client.stream("GET", f"/api/analysis-runs/{second['run_id']}/coach/stream") as response:
+        second_done = done_payload("".join(response.iter_text()))
+
+    assert second["run_id"] != first["run_id"]
+    assert "[[move:uci=e7e5,label=e5]]" in first_done["explanation"]
+    assert "[[move:uci=d7d5,label=d5]]" in second_done["explanation"]
+    assert len(provider.prompts) == 2
 
 
 def test_coach_stream_disconnect_resets_run_to_pending(hermetic_stores: FakeDatabase) -> None:
@@ -1651,7 +1719,8 @@ def test_analyze_position_uses_llm_coach_when_configured() -> None:
 
     assert data["coach_status"] == "pending"
     coach = _fetch_coach(data["session_id"], data["analysis_key"], "debutant")
-    assert coach["explanation"] == "Explication LLM. [source: King's Pawn, CC BY-SA 4.0]"
+    assert coach["explanation"].startswith("Explication LLM. [source: King's Pawn, CC BY-SA 4.0]")
+    assert "[[move:uci=e7e5,label=e5]]" in coach["explanation"]
     assert coach["coach_status"] == "generated"
     assert "llm_coach_unavailable" not in coach["fallbacks_used"]
 
@@ -1670,7 +1739,8 @@ def test_analyze_position_accepts_llm_without_citations() -> None:
     })
 
     coach = _fetch_coach(data["session_id"], data["analysis_key"], "debutant")
-    assert coach["explanation"] == "Explication sans citation."
+    assert coach["explanation"].startswith("Explication sans citation.")
+    assert "[[move:uci=e7e5,label=e5]]" in coach["explanation"]
     assert coach["coach_status"] == "generated"
     assert "llm_coach_unavailable" not in coach["fallbacks_used"]
 

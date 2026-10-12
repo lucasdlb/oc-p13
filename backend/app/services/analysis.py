@@ -400,13 +400,18 @@ def retrieve_rag_for_run(
         )
 
     lichess_stats = facts.lichess_stats.model_dump() if isinstance(facts.lichess_stats, LichessStats) else facts.lichess_stats
+    masters_stats = facts.masters_stats.model_dump() if isinstance(facts.masters_stats, LichessStats) else facts.masters_stats
     coach_context = build_coach_context(
         tree_context=tree_context,
+        current_fen=request.fen,
+        current_pgn=request.pgn,
         question=request.question,
         intent=intent,
         retrieved_contexts=retrieved_contexts,
         lichess_stats=lichess_stats,
         recommended_moves=[move.model_dump() for move in facts.recommended_moves],
+        masters_stats=masters_stats,
+        masters_moves=[move.model_dump() for move in facts.masters_moves],
         stockfish=None,
         fallbacks=tuple([*facts.fallbacks_used, *fallbacks]),
     )
@@ -486,11 +491,16 @@ def _coach_context_for_run(run: AnalysisRun) -> CoachContext:
     facts = AnalysisSnapshot.model_validate(run.explorer_facts or {})
     tree_context = _fallback_tree_context(facts.opening)
     lichess_stats = facts.lichess_stats.model_dump() if isinstance(facts.lichess_stats, LichessStats) else facts.lichess_stats
+    masters_stats = facts.masters_stats.model_dump() if isinstance(facts.masters_stats, LichessStats) else facts.masters_stats
     return build_coach_context(
         tree_context=tree_context,
+        current_fen=run.fen,
+        current_pgn=run.pgn,
         question=run.question,
         lichess_stats=lichess_stats,
         recommended_moves=[move.model_dump() for move in facts.recommended_moves],
+        masters_stats=masters_stats,
+        masters_moves=[move.model_dump() for move in facts.masters_moves],
         stockfish=run.stockfish_result,
         fallbacks=tuple([*facts.fallbacks_used, *run.rag_fallbacks, *run.stockfish_fallbacks]),
     )
